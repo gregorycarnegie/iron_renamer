@@ -47,6 +47,9 @@ RULES (applied in order given). Every rule flag takes suffix mods, e.g.
         <dirnum> (resets per folder)
         dates (UTC) -- <now|created|modified[:FMT[:OFFSET]]>, FMT tokens
         yyyy yy MM dd HH mm ss, OFFSET like +3d -12h
+        metadata (needs ExifTool on PATH or IRON_RENAMER_EXIFTOOL) --
+        <exif:TAG> plus <width> <height> <datetaken> <artist> <album>
+        <track> <title> <duration> <author>
   MODS: |upper |lower |title |sub:START[,LEN] |pad:N |trim[:CHARS]
         |replace:OLD[,NEW] |fallback:TEXT |+N |-N |*N |/N
 

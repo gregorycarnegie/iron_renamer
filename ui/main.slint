@@ -565,8 +565,21 @@ export component MainWindow inherits Window {
                             Chip { label: "<modified>"; clicked => { root.insert_tag("<modified>"); } }
                             Chip { label: "<now>";      clicked => { root.insert_tag("<now>"); } }
                         }
+                        HorizontalLayout {
+                            spacing: 4px;
+                            Chip { label: "<width>";  clicked => { root.insert_tag("<width>"); } }
+                            Chip { label: "<height>"; clicked => { root.insert_tag("<height>"); } }
+                            Chip { label: "<datetaken>"; clicked => { root.insert_tag("<datetaken>"); } }
+                        }
+                        HorizontalLayout {
+                            spacing: 4px;
+                            Chip { label: "<artist>"; clicked => { root.insert_tag("<artist>"); } }
+                            Chip { label: "<album>";  clicked => { root.insert_tag("<album>"); } }
+                            Chip { label: "<track>";  clicked => { root.insert_tag("<track>"); } }
+                            Chip { label: "<title>";  clicked => { root.insert_tag("<title>"); } }
+                        }
                         Text {
-                            text: "counters take :START:STEP · dates :FMT:OFFSET\nmods: |upper |lower |title |sub:0,3 |pad:4\n|trim |replace:a,b |fallback:x |+N |-N";
+                            text: "counters take :START:STEP · dates :FMT:OFFSET\nmedia + <exif:TAG> need ExifTool on PATH\nmods: |upper |lower |title |sub:0,3 |pad:4\n|trim |replace:a,b |fallback:x |+N |-N";
                             color: Palette.faint;
                             font-size: 10px;
                             font-family: "Cascadia Mono";

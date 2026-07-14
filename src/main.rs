@@ -7,6 +7,7 @@ mod cli;
 mod e2e;
 mod engine;
 mod gui;
+mod meta;
 mod presets;
 mod tags;
 

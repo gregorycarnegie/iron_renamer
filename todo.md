@@ -54,8 +54,8 @@ Compared with the [Advanced Renamer v4 user guide](https://www.advancedrenamer.c
 
 ## P2 — media and automation
 
-- [ ] Read image, audio, video, document, and executable metadata and expose fields as tags. The reference bundle uses ExifTool; prefer invoking a user-installed ExifTool rather than shipping its Perl runtime.
-- [ ] Add common image dimensions/date-taken, audio artist/album/track, video duration, and document author/title tags.
+- [x] Read image, audio, video, document, and executable metadata and expose fields as tags. The reference bundle uses ExifTool; prefer invoking a user-installed ExifTool rather than shipping its Perl runtime. (`<exif:TAG>`; ExifTool found on PATH or via `IRON_RENAMER_EXIFTOOL`; fields cached per file; values sanitized for names; tag stays literal without the tool)
+- [x] Add common image dimensions/date-taken, audio artist/album/track, video duration, and document author/title tags. (`<width> <height> <datetaken> <artist> <album> <track> <title> <duration> <author>` with sensible ExifTool field fallbacks)
 - [ ] Add file-pair mode so sidecars and alternate formats with the same stem receive the same generated name.
 - [ ] Add a Timestamp rule for created/modified/accessed times using absolute, delta, filename-pattern, parent-folder, or metadata values.
 - [x] Let the CLI execute a saved preset against a directory, recursive tree, item-list file, or explicit files, with masks/regex, sorting, verify-only mode, and a result log. (`--in DIR --recurse --mask`, `--list FILE`, `--sort/--desc`, preview = verify mode, `--export` writes the preview or — with `--apply` — the result log)

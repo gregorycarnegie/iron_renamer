@@ -18,6 +18,12 @@
 //             FMT tokens yyyy yy MM dd HH mm ss (default yyyy-MM-dd),
 //             OFFSET like +3d -12h +30m
 // Random      <rand[:MIN[:MAX]]> <rands[:LEN]>
+// Metadata    <exif:TAG> (any ExifTool tag) plus aliases <width> <height>
+//             <datetaken> <artist> <album> <track> <title> <duration>
+//             <author> — need a user-installed ExifTool; values are
+//             sanitized for file names (':' becomes '-'). A tag missing
+//             from the file gives "" (so |fallback applies); without
+//             ExifTool the tag is left literal.
 // Modifiers   |upper |lower |title |sub:START[,LEN] |pad:N |trim[:CHARS]
 //             |replace:OLD[,NEW] |fallback:TEXT |+N |-N |*N |/N
 
@@ -117,12 +123,52 @@ fn eval(body: &str, full_name: &str, ctx: &Ctx) -> Option<String> {
             const CS: &[u8] = b"abcdefghijklmnopqrstuvwxyz0123456789";
             (0..len).map(|_| CS[(rng() % CS.len() as u64) as usize] as char).collect()
         }
+        "exif" => {
+            let tag = args.first().copied().filter(|t| !t.is_empty())?;
+            sanitize(&crate::meta::get(ctx.path, tag)?)
+        }
+        "width" => meta_alias(ctx, &["imagewidth"])?,
+        "height" => meta_alias(ctx, &["imageheight"])?,
+        "datetaken" => meta_alias(ctx, &["datetimeoriginal", "createdate"])?,
+        "artist" => meta_alias(ctx, &["artist", "albumartist"])?,
+        "album" => meta_alias(ctx, &["album"])?,
+        "track" => meta_alias(ctx, &["track", "tracknumber"])?,
+        "title" => meta_alias(ctx, &["title"])?,
+        "duration" => meta_alias(ctx, &["duration"])?,
+        "author" => meta_alias(ctx, &["author", "creator"])?,
         _ => return None,
     };
     for m in parts {
         val = modify(val, m)?;
     }
     Some(val)
+}
+
+// First non-empty of several ExifTool field names; "" when the file simply
+// lacks them all (so |fallback applies), None when ExifTool is unavailable.
+fn meta_alias(ctx: &Ctx, names: &[&str]) -> Option<String> {
+    for n in names {
+        let v = crate::meta::get(ctx.path, n)?;
+        if !v.is_empty() {
+            return Some(sanitize(&v));
+        }
+    }
+    Some(String::new())
+}
+
+// Make a metadata value safe for a file name: ':' -> '-' (keeps dates and
+// durations readable), other invalid characters dropped.
+fn sanitize(v: &str) -> String {
+    let cleaned: String = v
+        .chars()
+        .filter_map(|c| match c {
+            ':' => Some('-'),
+            '<' | '>' | '"' | '/' | '\\' | '|' | '?' | '*' => None,
+            c if (c as u32) < 0x20 => None,
+            c => Some(c),
+        })
+        .collect();
+    cleaned.trim().to_string()
 }
 
 // Counter value: no args -> the batch counter; with args -> START + STEP*i.
@@ -421,6 +467,31 @@ mod tests {
         // bad modifier leaves the whole tag literal
         assert_eq!(expand("<name|bogus>", "a.jpg", &c), "<name|bogus>");
         assert_eq!(expand("<name|upper|sub:0,2>", "abcd.jpg", &c), "AB");
+    }
+
+    #[test]
+    fn sanitizes_metadata_values() {
+        assert_eq!(sanitize("2024:05:01 10:30:00"), "2024-05-01 10-30-00");
+        assert_eq!(sanitize("a<b>c?d*e"), "abcde");
+        assert_eq!(sanitize("  padded  "), "padded");
+    }
+
+    #[test]
+    fn metadata_tags_via_exiftool() {
+        // Only runs when ExifTool is reachable (PATH or IRON_RENAMER_EXIFTOOL).
+        if !crate::meta::available() {
+            eprintln!("skipped: exiftool not available");
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!("iron_meta_{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("data.txt");
+        fs::write(&p, "hello").unwrap();
+        let c = ctx(&p, "data.txt");
+        // ExifTool reports File: fields for any file type.
+        assert_eq!(expand("<exif:FileType>", "data.txt", &c), "TXT");
+        // A tag the file lacks resolves to "" so |fallback applies.
+        assert_eq!(expand("<artist|fallback:unknown>", "data.txt", &c), "unknown");
     }
 
     #[test]
