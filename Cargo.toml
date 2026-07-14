@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+crc32fast = "1.5.0"
 regex = "1.13.0"
 slint = { version = "1.17.1", default-features = false, features = ["accessibility", "compat-1-2", "renderer-femtovg", "std", "unstable-winit-030"] } # winit feature: OS file drag-and-drop
 rfd = "0.17.2"

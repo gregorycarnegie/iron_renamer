@@ -283,19 +283,7 @@ fn crc32_cached(ctx: &Ctx) -> Option<String> {
         if let Some(&v) = c.borrow().get(ctx.path) {
             return Some(format!("{v:08x}"));
         }
-        let data = fs::read(ctx.path).ok()?;
-        let mut crc = !0u32;
-        for &b in &data {
-            crc ^= b as u32;
-            for _ in 0..8 {
-                crc = if crc & 1 != 0 {
-                    (crc >> 1) ^ 0xEDB8_8320
-                } else {
-                    crc >> 1
-                };
-            }
-        }
-        let v = !crc;
+        let v = crc32fast::hash(&fs::read(ctx.path).ok()?);
         c.borrow_mut().insert(ctx.path.to_path_buf(), v);
         Some(format!("{v:08x}"))
     })

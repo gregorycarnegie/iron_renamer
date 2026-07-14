@@ -83,7 +83,7 @@ fn mode_blocked(ui: &MainWindow, s: &State, want_dirs: bool) -> bool {
 // New items arrive natural-sorted among themselves but never disturb the
 // existing order, so manual reordering sticks.
 fn add_files(s: &mut State, mut paths: Vec<PathBuf>) {
-    paths.sort_by_key(|p| natural_key(&name_of(p)));
+    paths.sort_by_cached_key(|p| natural_key(&name_of(p)));
     for p in paths {
         if !s.files.contains(&p) {
             s.files.push(p);
@@ -483,16 +483,16 @@ pub fn run() -> Result<(), slint::PlatformError> {
         let kind = ui.get_sort_by().to_string();
         let mut s = st.borrow_mut();
         match kind.as_str() {
-            "name" => s.files.sort_by_key(|f| natural_key(&name_of(f))),
+            "name" => s.files.sort_by_cached_key(|f| natural_key(&name_of(f))),
             "ext" => s
                 .files
-                .sort_by_key(|f| split_ext(&name_of(f)).1.to_lowercase()),
+                .sort_by_cached_key(|f| split_ext(&name_of(f)).1.to_lowercase()),
             "size" => s
                 .files
-                .sort_by_key(|f| fs::metadata(f).map(|m| m.len()).unwrap_or(0)),
+                .sort_by_cached_key(|f| fs::metadata(f).map(|m| m.len()).unwrap_or(0)),
             "date" => s
                 .files
-                .sort_by_key(|f| fs::metadata(f).and_then(|m| m.modified()).ok()),
+                .sort_by_cached_key(|f| fs::metadata(f).and_then(|m| m.modified()).ok()),
             _ => return, // manual order
         }
         if ui.get_sort_desc() {

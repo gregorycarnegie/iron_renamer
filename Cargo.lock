@@ -2417,6 +2417,7 @@ dependencies = [
 name = "iron_renamer"
 version = "0.1.0"
 dependencies = [
+ "crc32fast",
  "proptest",
  "regex",
  "rfd",

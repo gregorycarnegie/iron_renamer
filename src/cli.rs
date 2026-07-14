@@ -359,10 +359,10 @@ pub fn run(args: Vec<String>) {
         }
     });
     match sort.as_str() {
-        "name" => files.sort_by_key(|f| natural_key(&name_of(f))),
-        "ext" => files.sort_by_key(|f| split_ext(&name_of(f)).1.to_lowercase()),
-        "size" => files.sort_by_key(|f| fs::metadata(f).map(|m| m.len()).unwrap_or(0)),
-        "date" => files.sort_by_key(|f| fs::metadata(f).and_then(|m| m.modified()).ok()),
+        "name" => files.sort_by_cached_key(|f| natural_key(&name_of(f))),
+        "ext" => files.sort_by_cached_key(|f| split_ext(&name_of(f)).1.to_lowercase()),
+        "size" => files.sort_by_cached_key(|f| fs::metadata(f).map(|m| m.len()).unwrap_or(0)),
+        "date" => files.sort_by_cached_key(|f| fs::metadata(f).and_then(|m| m.modified()).ok()),
         _ => {}
     }
     if desc {

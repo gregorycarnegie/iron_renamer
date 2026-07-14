@@ -221,13 +221,16 @@ pub fn plan(files: &[PathBuf], cfg: &BatchCfg) -> Vec<PlanItem> {
         });
     }
 
-    // A target on disk is only a conflict if a batch item vacates that path.
-    let vacates = |cand: &Path| {
-        cfg.mode != Mode::Copy
-            && files
-                .iter()
-                .zip(&pre)
-                .any(|(g, p)| p.changed && lower_abs(g) == lower_abs(cand))
+    // A target on disk is only a conflict if no batch item vacates that path.
+    let vacated: HashSet<String> = if cfg.mode == Mode::Copy {
+        HashSet::new()
+    } else {
+        files
+            .iter()
+            .zip(&pre)
+            .filter(|(_, p)| p.changed)
+            .map(|(f, _)| lower_abs(f))
+            .collect()
     };
 
     // Pass 2: sequential collision resolution.
@@ -255,8 +258,9 @@ pub fn plan(files: &[PathBuf], cfg: &BatchCfg) -> Vec<PlanItem> {
                 let is_self = key == self_lower;
                 // In copy mode "the same file, different case" is still a
                 // collision; for rename it is a valid case-only rename.
-                let disk =
-                    target.exists() && !vacates(&target) && (!is_self || cfg.mode == Mode::Copy);
+                let disk = target.exists()
+                    && !vacated.contains(&key)
+                    && (!is_self || cfg.mode == Mode::Copy);
                 let dup = taken.contains(&key);
                 if !disk && !dup {
                     break;
