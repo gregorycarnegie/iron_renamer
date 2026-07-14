@@ -38,6 +38,7 @@ fn run(tool: &Path, args: &[&OsStr]) -> Option<String> {
     }
 }
 
+#[cfg(test)] // probe for the gated test; frontends surface missing ExifTool via literal tags
 pub fn available() -> bool {
     tool().is_some()
 }
