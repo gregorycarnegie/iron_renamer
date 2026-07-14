@@ -1,5 +1,7 @@
 # Iron Renamer
 
+[![CI](https://github.com/gregorycarnegie/iron_renamer/actions/workflows/ci.yml/badge.svg)](https://github.com/gregorycarnegie/iron_renamer/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/gregorycarnegie/iron_renamer)](https://github.com/gregorycarnegie/iron_renamer/releases/latest)
 [![Rust 2024](https://img.shields.io/badge/Rust-2024-orange?logo=rust)](https://www.rust-lang.org/)
 [![Slint 1.17](https://img.shields.io/badge/GUI-Slint_1.17-2379f4)](https://slint.dev/)
 ![CLI and GUI](https://img.shields.io/badge/interfaces-CLI_%2B_GUI-555)
