@@ -382,28 +382,47 @@ pub fn execute(ops: Vec<Op>, mode: Mode) -> ExecResult {
         orig: PathBuf,
         cur: PathBuf,
         to: PathBuf,
+        cur_key: String,
+        to_key: String,
     }
     let low = |p: &Path| p.to_string_lossy().to_lowercase();
+    let remove_source = |sources: &mut HashMap<String, usize>, key: &str| {
+        let last = sources.get(key) == Some(&1);
+        if last {
+            sources.remove(key);
+        } else if let Some(n) = sources.get_mut(key) {
+            *n -= 1;
+        }
+    };
     let mut pending: Vec<P> = ops
         .into_iter()
-        .map(|o| P {
-            orig: o.from.clone(),
-            cur: o.from,
-            to: o.to,
+        .map(|o| {
+            let cur_key = low(&o.from);
+            let to_key = low(&o.to);
+            P {
+                orig: o.from.clone(),
+                cur: o.from,
+                to: o.to,
+                cur_key,
+                to_key,
+            }
         })
         .collect();
+    let mut sources: HashMap<String, usize> = HashMap::new();
+    for p in &pending {
+        *sources.entry(p.cur_key.clone()).or_default() += 1;
+    }
     let mut tmp_n = 0u32;
 
     while !pending.is_empty() {
-        let unblocked = (0..pending.len()).find(|&i| {
-            !pending
-                .iter()
-                .enumerate()
-                .any(|(j, q)| j != i && low(&q.cur) == low(&pending[i].to))
+        // ponytail: long dependency chains still scan; use a ready queue if that becomes measurable.
+        let unblocked = pending.iter().position(|p| {
+            sources.get(&p.to_key).copied().unwrap_or(0) <= usize::from(p.cur_key == p.to_key)
         });
         if let Some(i) = unblocked {
-            let p = pending.remove(i);
-            let case_only = low(&p.cur) == low(&p.to);
+            let p = pending.swap_remove(i);
+            remove_source(&mut sources, &p.cur_key);
+            let case_only = p.cur_key == p.to_key;
             // fs::rename overwrites on Unix; refuse instead of clobbering.
             let res = if !case_only && p.to.exists() {
                 Err(io::Error::new(
@@ -445,9 +464,15 @@ pub fn execute(ops: Vec<Op>, mode: Mode) -> ExecResult {
                 }
             }
             match fs::rename(&pending[0].cur, &tmp) {
-                Ok(_) => pending[0].cur = tmp,
+                Ok(_) => {
+                    let old_key = std::mem::replace(&mut pending[0].cur_key, low(&tmp));
+                    remove_source(&mut sources, &old_key);
+                    *sources.entry(pending[0].cur_key.clone()).or_default() += 1;
+                    pending[0].cur = tmp;
+                }
                 Err(e) => {
-                    let p = pending.remove(0);
+                    let p = pending.swap_remove(0);
+                    remove_source(&mut sources, &p.cur_key);
                     failed.push((
                         Op {
                             from: p.orig,
