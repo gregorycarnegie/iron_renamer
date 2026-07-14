@@ -491,7 +491,39 @@ fn modify(val: String, m: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
     use std::path::Path;
+
+    proptest! {
+        #[test]
+        fn alpha_counters_roundtrip(n in 1i64..=1_000_000) {
+            prop_assert_eq!(alpha_to_num(&alpha(n)), Some(n));
+        }
+
+        #[test]
+        fn alpha_counters_reject_nonletters(s in "[^A-Za-z]+") {
+            prop_assert_eq!(alpha_to_num(&s), None);
+        }
+
+        #[test]
+        fn out_of_range_roman_counters_stay_decimal(
+            n in prop_oneof![i64::MIN..=0, 4000i64..=i64::MAX],
+        ) {
+            prop_assert_eq!(roman(n), n.to_string());
+        }
+
+        #[test]
+        fn civil_dates_roundtrip(secs in 0i64..4_102_444_800) {
+            let (y, m, d, h, mi, s) = civil_utc(secs);
+            prop_assert_eq!(epoch_from_civil(y, m, d, h, mi, s), secs);
+        }
+
+        #[test]
+        fn plain_templates_pass_through(template in "[^<]*") {
+            let path = Path::new("a.txt");
+            prop_assert_eq!(expand(&template, "a.txt", &ctx(path, "a.txt")), template);
+        }
+    }
 
     fn ctx<'a>(path: &'a Path, original: &'a str) -> Ctx<'a> {
         Ctx {

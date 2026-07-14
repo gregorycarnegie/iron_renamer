@@ -160,6 +160,25 @@ pub fn json_str(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn escaping_roundtrips(s in "[^\\r]*") {
+            prop_assert_eq!(unesc(&esc(&s)), s);
+        }
+
+        #[test]
+        fn csv_single_field_roundtrips(s in any::<String>()) {
+            prop_assert_eq!(csv_split(&csv_field(&s)), vec![s]);
+        }
+
+        #[test]
+        fn json_escapes_control_characters(c in 0u8..0x20) {
+            let encoded = json_str(&(c as char).to_string());
+            prop_assert!(encoded[1..encoded.len() - 1].chars().all(|c| !c.is_control()));
+        }
+    }
 
     #[test]
     fn preset_roundtrip_with_awkward_text() {

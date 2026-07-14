@@ -924,6 +924,26 @@ pub fn name_of(p: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn split_and_join_extension_roundtrip(
+            stem in "[A-Za-z0-9_ -]+",
+            ext in "[A-Za-z0-9_ -]+",
+        ) {
+            let name = join_ext(&stem, &ext);
+            prop_assert_eq!(split_ext(&name), (stem.as_str(), ext.as_str()));
+        }
+
+        #[test]
+        fn wildcard_matches_itself_and_star_matches_all(s in any::<String>()) {
+            prop_assert!(wild_match("*", &s));
+            if !s.contains(['*', '?']) {
+                prop_assert!(wild_match(&s, &s));
+            }
+        }
+    }
 
     fn entry(kind: &str, mods: &[&str], a: &str, b: &str) -> RuleEntry {
         let (rule, part) = build_rule(kind, mods, a, b).unwrap();
