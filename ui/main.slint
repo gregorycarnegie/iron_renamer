@@ -197,6 +197,8 @@ export component MainWindow inherits Window {
     in-out property <string> dest_text: "";
     in-out property <string> collide: "fail";
     in-out property <string> collide_pattern: "";
+    in-out property <bool> pairs: false;
+    in-out property <string> touch_text: "";
     callback output_changed();
     callback import_csv();
     callback export_preview();
@@ -676,6 +678,11 @@ export component MainWindow inherits Window {
                         text <=> root.collide_pattern;
                         edited => { root.output_changed(); }
                     }
+                    Field {
+                        mono: true;
+                        placeholder: "timestamps: modified=+1h · all=exif";
+                        text <=> root.touch_text;
+                    }
 
                     SectionTitle { text: "NUMBERING"; }
                     HorizontalLayout {
@@ -739,6 +746,7 @@ export component MainWindow inherits Window {
                                 text <=> root.mask_text;
                             }
                             Chip { label: "recurse"; active: root.recurse; clicked => { root.recurse = !root.recurse; } }
+                            Chip { label: "pairs"; active: root.pairs; clicked => { root.pairs = !root.pairs; root.output_changed(); } }
                             Rectangle { horizontal-stretch: 1; }
                             Text {
                                 text: "sort";

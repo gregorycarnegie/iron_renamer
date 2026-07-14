@@ -578,9 +578,39 @@ pub fn run() -> Result<(), slint::PlatformError> {
     });
 
     on!(on_apply_batch, |ui, st| {
+        // A bad timestamp spec blocks the batch before anything moves.
+        let touch_spec = match ui.get_touch_text().trim() {
+            "" => None,
+            spec => match batch::parse_touch(spec) {
+                Ok(t) => Some(t),
+                Err(e) => {
+                    ui.set_status_text(e.into());
+                    return;
+                }
+            },
+        };
         let c = compute(&ui, &st.borrow());
         let planned = c.plan.len();
         let res = batch::execute(c.plan, c.mode);
+        let mut touched = String::new();
+        if let Some(spec) = &touch_spec {
+            let finals: Vec<PathBuf> = c
+                .items
+                .iter()
+                .map(|it| {
+                    res.renamed
+                        .iter()
+                        .find(|op| op.from == it.from)
+                        .map(|op| op.to.clone())
+                        .unwrap_or_else(|| it.from.clone())
+                })
+                .collect();
+            let (n, errors) = batch::apply_touch(&finals, spec);
+            touched = match errors.len() {
+                0 => format!(" · timestamps set on {n}"),
+                k => format!(" · timestamps set on {n}, {k} failed"),
+            };
+        }
         let done = match c.mode {
             Mode::Rename => "renamed",
             Mode::Copy => "copied",
@@ -605,9 +635,9 @@ pub fn run() -> Result<(), slint::PlatformError> {
         refresh(&ui, &st.borrow());
         ui.set_status_text(
             match res.failed.len() {
-                0 => format!("{done} {} of {planned} item(s){warn}", res.renamed.len()),
+                0 => format!("{done} {} of {planned} item(s){touched}{warn}", res.renamed.len()),
                 n => format!(
-                    "{done} {} of {planned} item(s), {n} failed — kept in list for retry{warn}",
+                    "{done} {} of {planned} item(s), {n} failed — kept in list for retry{touched}{warn}",
                     res.renamed.len()
                 ),
             }
@@ -672,7 +702,16 @@ fn compute(ui: &MainWindow, s: &State) -> Computed {
         }
         _ => Collision::Fail,
     };
-    let cfg = BatchCfg { rules: &rules, start, pad, overrides: &s.overrides, mode, dest: &dest, collision };
+    let cfg = BatchCfg {
+        rules: &rules,
+        start,
+        pad,
+        overrides: &s.overrides,
+        mode,
+        dest: &dest,
+        collision,
+        pairs: ui.get_pairs(),
+    };
 
     let items = batch::plan(&s.files, &cfg);
     let mut rows = Vec::new();

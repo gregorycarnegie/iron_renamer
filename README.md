@@ -92,6 +92,9 @@ OPTIONS:
   --in <DIR> [--recurse]       take files from DIR; --mask "*.jpg;!*thumb*"
   --list <FILE>                take files from a list (keeps its order)
   --sort <name|ext|size|date|none> [--desc]
+  --pairs                      same-stem sidecars share the generated stem
+  --touch <WHICH=VALUE>        set created|modified|accessed|all timestamps:
+                               "2024-05-01 10:30" | +3d | name | parent | exif
   -d, --dirs                   rename folders instead of files
   -x, --apply                  actually rename (otherwise preview only)
 ```

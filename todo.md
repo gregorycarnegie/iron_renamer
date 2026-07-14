@@ -56,8 +56,8 @@ Compared with the [Advanced Renamer v4 user guide](https://www.advancedrenamer.c
 
 - [x] Read image, audio, video, document, and executable metadata and expose fields as tags. The reference bundle uses ExifTool; prefer invoking a user-installed ExifTool rather than shipping its Perl runtime. (`<exif:TAG>`; ExifTool found on PATH or via `IRON_RENAMER_EXIFTOOL`; fields cached per file; values sanitized for names; tag stays literal without the tool)
 - [x] Add common image dimensions/date-taken, audio artist/album/track, video duration, and document author/title tags. (`<width> <height> <datetaken> <artist> <album> <track> <title> <duration> <author>` with sensible ExifTool field fallbacks)
-- [ ] Add file-pair mode so sidecars and alternate formats with the same stem receive the same generated name.
-- [ ] Add a Timestamp rule for created/modified/accessed times using absolute, delta, filename-pattern, parent-folder, or metadata values.
+- [x] Add file-pair mode so sidecars and alternate formats with the same stem receive the same generated name. (CLI `--pairs`, GUI `pairs` chip; counters still count every row, including sidecars)
+- [x] Add a Timestamp rule for created/modified/accessed times using absolute, delta, filename-pattern, parent-folder, or metadata values. (CLI `--touch "WHICH=VALUE"`, GUI timestamps field; dates UTC; files only)
 - [x] Let the CLI execute a saved preset against a directory, recursive tree, item-list file, or explicit files, with masks/regex, sorting, verify-only mode, and a result log. (`--in DIR --recurse --mask`, `--list FILE`, `--sort/--desc`, preview = verify mode, `--export` writes the preview or — with `--apply` — the result log)
 - [x] Add keyboard shortcuts for add/remove/select/search, manual override, and starting a batch. (Ctrl+O add · ↑/↓ select · Ctrl+↑/↓ reorder · Del remove · Ctrl+F search · F2 override · Ctrl+Z undo · Ctrl+Enter start · Esc deselect; active while no text field has focus)
 

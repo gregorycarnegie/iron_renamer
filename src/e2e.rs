@@ -54,6 +54,7 @@ fn full_flow_preview_chain_collision_undo() {
         mode: Mode::Rename,
         dest: "",
         collision: Collision::Fail,
+        pairs: false,
     };
 
     // Preview: every target is vacated by the batch itself, so no conflicts.
@@ -150,6 +151,7 @@ fn case_insensitive_duplicate_detection() {
         mode: Mode::Rename,
         dest: "",
         collision: Collision::Fail,
+        pairs: false,
     };
     let items = batch::plan(&files, &cfg);
     assert!(items[0].issue.is_none());

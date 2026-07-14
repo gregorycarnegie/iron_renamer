@@ -263,7 +263,7 @@ fn crc32_cached(ctx: &Ctx) -> Option<String> {
     })
 }
 
-fn parse_offset(s: &str) -> Option<i64> {
+pub(crate) fn parse_offset(s: &str) -> Option<i64> {
     let (num, mult) = match s.chars().last()? {
         'd' => (&s[..s.len() - 1], 86400),
         'h' => (&s[..s.len() - 1], 3600),
@@ -288,6 +288,45 @@ pub fn civil_utc(secs: i64) -> (i64, u32, u32, u32, u32, u32) {
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = yoe + era * 400 + i64::from(m <= 2);
     (y, m as u32, d as u32, rem / 3600, rem % 3600 / 60, rem % 60)
+}
+
+/// Epoch seconds from a UTC civil date (inverse of `civil_utc`).
+pub(crate) fn epoch_from_civil(y: i64, m: u32, d: u32, h: u32, mi: u32, s: u32) -> i64 {
+    let yy = if m <= 2 { y - 1 } else { y };
+    let era = yy.div_euclid(400);
+    let yoe = yy - era * 400;
+    let mp = i64::from(if m > 2 { m - 3 } else { m + 9 });
+    let doy = (153 * mp + 2) / 5 + i64::from(d) - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146_097 + doe - 719_468;
+    days * 86400 + i64::from(h) * 3600 + i64::from(mi) * 60 + i64::from(s)
+}
+
+/// Pull the first yyyy?MM?dd[?HH?mm[?ss]] out of arbitrary text
+/// ("IMG_20240501_1230.jpg", "2024-05-01", "trip 2024.05.01") as epoch secs.
+pub(crate) fn extract_datetime(text: &str) -> Option<i64> {
+    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let re = RE.get_or_init(|| {
+        regex::Regex::new(
+            r"(\d{4})\D?(\d{2})\D?(\d{2})(?:\D?(\d{2})\D?(\d{2})(?:\D?(\d{2}))?)?",
+        )
+        .unwrap()
+    });
+    for c in re.captures_iter(text) {
+        let g = |i: usize| c.get(i).map(|m| m.as_str().parse::<u32>().unwrap()).unwrap_or(0);
+        let (y, m, d) = (c[1].parse::<i64>().unwrap(), g(2), g(3));
+        let (h, mi, s) = (g(4), g(5), g(6));
+        if (1900..=2999).contains(&y)
+            && (1..=12).contains(&m)
+            && (1..=31).contains(&d)
+            && h < 24
+            && mi < 60
+            && s < 60
+        {
+            return Some(epoch_from_civil(y, m, d, h, mi, s));
+        }
+    }
+    None
 }
 
 /// "yyyy-MM-dd HH:mm" for a filesystem time; used by the item-details panel.
@@ -467,6 +506,18 @@ mod tests {
         // bad modifier leaves the whole tag literal
         assert_eq!(expand("<name|bogus>", "a.jpg", &c), "<name|bogus>");
         assert_eq!(expand("<name|upper|sub:0,2>", "abcd.jpg", &c), "AB");
+    }
+
+    #[test]
+    fn extracts_datetimes_from_text() {
+        let (y, m, d, h, mi, s) = civil_utc(extract_datetime("IMG_20240501_123005.jpg").unwrap());
+        assert_eq!((y, m, d, h, mi, s), (2024, 5, 1, 12, 30, 5));
+        let (y, m, d, h, ..) = civil_utc(extract_datetime("trip 2024-05-01").unwrap());
+        assert_eq!((y, m, d, h), (2024, 5, 1, 0));
+        assert!(extract_datetime("no date here 123").is_none());
+        assert!(extract_datetime("9999 99 99").is_none(), "month/day ranges checked");
+        // epoch_from_civil is the inverse of civil_utc
+        assert_eq!(civil_utc(epoch_from_civil(1999, 12, 31, 23, 59, 58)), (1999, 12, 31, 23, 59, 58));
     }
 
     #[test]

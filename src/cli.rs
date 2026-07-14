@@ -74,6 +74,12 @@ OPTIONS:
                                (keeps list order unless --sort is given)
   --sort <name|ext|size|date|none>   sort order (default: natural by name)
   --desc                       reverse the sort order
+  --pairs                      file-pair mode: same-stem sidecars (img1.jpg +
+                               img1.xmp) take the same new stem
+  --touch <WHICH=VALUE>        set timestamps after the batch; WHICH: comma
+                               list of created|modified|accessed or all;
+                               VALUE: \"2024-05-01 10:30\" | +3d | -2h |
+                               name | parent | exif (dates are UTC)
   -d, --dirs                   rename folders instead of files
   -x, --apply                  actually rename (otherwise preview only)
 
@@ -102,6 +108,8 @@ pub fn run(args: Vec<String>) {
     let mut sort: Option<String> = None;
     let mut desc = false;
     let mut from_list = false;
+    let mut pairs = false;
+    let mut touch: Option<batch::TouchSpec> = None;
     // Pre-scan flags that must apply regardless of argument order.
     let dirs = args.iter().any(|a| a == "-d" || a == "--dirs");
     let recurse = args.iter().any(|a| a == "--recurse");
@@ -263,6 +271,11 @@ pub fn run(args: Vec<String>) {
                 sort = Some(v[0].clone());
             }
             "--desc" => desc = true,
+            "--pairs" => pairs = true,
+            "--touch" => {
+                let v = need(1, &mut it);
+                touch = Some(batch::parse_touch(&v[0]).unwrap_or_else(|e| die(&e)));
+            }
             "--copy-to" => {
                 let v = need(1, &mut it);
                 (mode, dest) = (batch::Mode::Copy, v[0].clone());
@@ -292,7 +305,7 @@ pub fn run(args: Vec<String>) {
         }
     }
 
-    if rules.is_empty() && dest.is_empty() {
+    if rules.is_empty() && dest.is_empty() && touch.is_none() {
         die("no rules given (see --help)");
     }
     if files.is_empty() {
@@ -333,7 +346,16 @@ pub fn run(args: Vec<String>) {
     }
 
     let overrides = std::collections::HashMap::new();
-    let cfg = batch::BatchCfg { rules: &rules, start, pad, overrides: &overrides, mode, dest: &dest, collision };
+    let cfg = batch::BatchCfg {
+        rules: &rules,
+        start,
+        pad,
+        overrides: &overrides,
+        mode,
+        dest: &dest,
+        collision,
+        pairs,
+    };
     let items = batch::plan(&files, &cfg);
     // With --apply the export becomes a result log, written after execution.
     if let Some(path) = &export
@@ -370,13 +392,16 @@ pub fn run(args: Vec<String>) {
         }
     }
 
-    if ops.is_empty() && conflicts == 0 {
+    if ops.is_empty() && conflicts == 0 && touch.is_none() {
         println!("nothing to {verb} ({} item(s) unchanged)", files.len());
         return;
     }
 
     if !apply {
         println!("\npreview only — re-run with --apply to {verb} {} item(s)", ops.len());
+        if touch.is_some() {
+            println!("timestamps will be set on {} item(s)", files.len());
+        }
         if conflicts > 0 {
             eprintln!("{conflicts} conflict(s) must be fixed first");
         }
@@ -402,12 +427,32 @@ pub fn run(args: Vec<String>) {
             Err(e) => eprintln!("warning: could not write result log: {e}"),
         }
     }
-    println!("\n{done} {} of {planned} item(s)", res.renamed.len());
+    // Timestamps go on every item at its final location (copies included).
+    if let Some(spec) = &touch {
+        let finals: Vec<PathBuf> = items
+            .iter()
+            .map(|it| {
+                res.renamed
+                    .iter()
+                    .find(|op| op.from == it.from)
+                    .map(|op| op.to.clone())
+                    .unwrap_or_else(|| it.from.clone())
+            })
+            .collect();
+        let (n, errors) = batch::apply_touch(&finals, spec);
+        println!("timestamps set on {n} item(s)");
+        for e in &errors {
+            eprintln!("TOUCH FAILED {e}");
+        }
+    }
+    if planned > 0 {
+        println!("\n{done} {} of {planned} item(s)", res.renamed.len());
+    }
     if !res.failed.is_empty() {
         eprintln!("{} failed — re-run the same command to retry them", res.failed.len());
         exit(1);
     }
-    if mode != batch::Mode::Copy {
+    if planned > 0 && mode != batch::Mode::Copy {
         println!("'iron_renamer undo' reverts this batch");
     }
 }
