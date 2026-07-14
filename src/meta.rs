@@ -24,15 +24,18 @@ fn tool() -> Option<&'static PathBuf> {
     .as_ref()
 }
 
-fn run(tool: &Path, args: &[&OsStr]) -> Option<String> {
-    let mut cmd = Command::new(tool);
-    cmd.args(args);
+fn cmd(tool: &Path) -> Command {
+    let mut c = Command::new(tool);
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW: no console flash from the GUI
+        c.creation_flags(0x0800_0000); // CREATE_NO_WINDOW: no console flash from the GUI
     }
-    let out = cmd.output().ok()?;
+    c
+}
+
+fn run(tool: &Path, args: &[&OsStr]) -> Option<String> {
+    let out = cmd(tool).args(args).output().ok()?;
     if out.status.success() {
         Some(String::from_utf8_lossy(&out.stdout).into_owned())
     } else {
@@ -60,18 +63,13 @@ pub fn get(path: &Path, tag: &str) -> Option<String> {
 /// Returns ExifTool's summary line (e.g. "2 image files updated").
 pub fn set(paths: &[PathBuf], assigns: &[String]) -> Result<String, String> {
     let t = tool().ok_or("ExifTool not found (install it or set IRON_RENAMER_EXIFTOOL)")?;
-    let mut cmd = Command::new(t);
-    cmd.arg("-overwrite_original").arg("-m");
+    let mut c = cmd(t);
+    c.arg("-overwrite_original").arg("-m");
     for a in assigns {
-        cmd.arg(format!("-{a}"));
+        c.arg(format!("-{a}"));
     }
-    cmd.args(paths);
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x0800_0000);
-    }
-    let out = cmd.output().map_err(|e| e.to_string())?;
+    c.args(paths);
+    let out = c.output().map_err(|e| e.to_string())?;
     let text = |b: &[u8]| String::from_utf8_lossy(b).trim().to_string();
     if out.status.success() {
         Ok(text(&out.stdout))

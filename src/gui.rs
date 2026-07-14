@@ -2,7 +2,7 @@
 
 use crate::{
     batch::{self, BatchCfg, Collision, Mode, Op},
-    engine::{Masks, RuleEntry, build_rule, collect_dir, name_of, natural_key, split_ext},
+    engine::{Masks, RuleEntry, build_rule, collect_dir, name_of, natural_key, sort_files},
 };
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 use std::{cell::RefCell, collections::HashMap, fs, path::PathBuf, rc::Rc};
@@ -488,30 +488,15 @@ pub fn run(initial: Vec<PathBuf>) -> Result<(), slint::PlatformError> {
     });
 
     on!(on_sort_changed, |ui, st| {
-        let kind = ui.get_sort_by().to_string();
         let mut s = st.borrow_mut();
-        match kind.as_str() {
-            "name" => s.files.sort_by_cached_key(|f| natural_key(&name_of(f))),
-            "ext" => s
-                .files
-                .sort_by_cached_key(|f| split_ext(&name_of(f)).1.to_lowercase()),
-            "size" => s
-                .files
-                .sort_by_cached_key(|f| fs::metadata(f).map(|m| m.len()).unwrap_or(0)),
-            "date" => s
-                .files
-                .sort_by_cached_key(|f| fs::metadata(f).and_then(|m| m.modified()).ok()),
-            _ => return, // manual order
+        if !sort_files(&mut s.files, &ui.get_sort_by()) {
+            return; // manual order
         }
         if ui.get_sort_desc() {
             s.files.reverse();
         }
         drop(s);
         ui.set_selected_row(-1);
-        refresh(&ui, &st.borrow());
-    });
-
-    on!(on_search_changed, |ui, st| {
         refresh(&ui, &st.borrow());
     });
 
@@ -584,11 +569,8 @@ pub fn run(initial: Vec<PathBuf>) -> Result<(), slint::PlatformError> {
         refresh(&ui, &st.borrow());
     });
 
-    on!(on_numbering_changed, |ui, st| {
-        refresh(&ui, &st.borrow());
-    });
-
-    on!(on_output_changed, |ui, st| {
+    // Any numbering/output/search edit just recomputes the preview.
+    on!(on_settings_changed, |ui, st| {
         refresh(&ui, &st.borrow());
     });
 
@@ -646,18 +628,7 @@ pub fn run(initial: Vec<PathBuf>) -> Result<(), slint::PlatformError> {
         let res = batch::execute(c.plan, c.mode);
         let mut touched = String::new();
         if let Some(spec) = &touch_spec {
-            let finals: Vec<PathBuf> = c
-                .items
-                .iter()
-                .map(|it| {
-                    res.renamed
-                        .iter()
-                        .find(|op| op.from == it.from)
-                        .map(|op| op.to.clone())
-                        .unwrap_or_else(|| it.from.clone())
-                })
-                .collect();
-            let (n, errors) = batch::apply_touch(&finals, spec);
+            let (n, errors) = batch::apply_touch(&batch::finals(&c.items, &res), spec);
             touched = match errors.len() {
                 0 => format!(" · timestamps set on {n}"),
                 k => format!(" · timestamps set on {n}, {k} failed"),
@@ -760,15 +731,7 @@ fn compute(ui: &MainWindow, s: &State) -> Computed {
     } else {
         ui.get_dest_text().to_string()
     };
-    let collision = match ui.get_collide().as_str() {
-        "number" => Collision::Number,
-        "letter" => Collision::Letter,
-        "pattern" => {
-            let p = ui.get_collide_pattern().to_string();
-            Collision::Pattern(if p.is_empty() { "_<num>".into() } else { p })
-        }
-        _ => Collision::Fail,
-    };
+    let collision = Collision::parse(&ui.get_collide(), &ui.get_collide_pattern());
     let cfg = BatchCfg {
         rules: &rules,
         start,

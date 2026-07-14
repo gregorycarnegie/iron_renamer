@@ -175,7 +175,7 @@ export component MainWindow inherits Window {
     callback move_rule(int, int);
     callback apply_batch();
     callback undo_batch();
-    callback numbering_changed();
+    callback settings_changed();
     callback insert_tag(string);
     callback row_clicked(int);
     callback save_list();
@@ -184,7 +184,6 @@ export component MainWindow inherits Window {
     callback move_selected(int);
     callback set_override();
     callback sort_changed();
-    callback search_changed();
     in-out property <bool> show_tags: false;
     in-out property <int> selected_row: -1;
     in-out property <string> search_text: "";
@@ -199,7 +198,6 @@ export component MainWindow inherits Window {
     in-out property <string> collide_pattern: "";
     in-out property <bool> pairs: false;
     in-out property <string> touch_text: "";
-    callback output_changed();
     callback import_csv();
     callback export_preview();
     callback save_preset();
@@ -665,15 +663,15 @@ export component MainWindow inherits Window {
                     SectionTitle { text: "OUTPUT"; }
                     HorizontalLayout {
                         spacing: 6px;
-                        Chip { label: "Rename"; active: root.batch_mode == "rename"; clicked => { root.batch_mode = "rename"; root.output_changed(); } }
-                        Chip { label: "Copy";   active: root.batch_mode == "copy";   clicked => { root.batch_mode = "copy";   root.output_changed(); } }
-                        Chip { label: "Move";   active: root.batch_mode == "move";   clicked => { root.batch_mode = "move";   root.output_changed(); } }
+                        Chip { label: "Rename"; active: root.batch_mode == "rename"; clicked => { root.batch_mode = "rename"; root.settings_changed(); } }
+                        Chip { label: "Copy";   active: root.batch_mode == "copy";   clicked => { root.batch_mode = "copy";   root.settings_changed(); } }
+                        Chip { label: "Move";   active: root.batch_mode == "move";   clicked => { root.batch_mode = "move";   root.settings_changed(); } }
                     }
                     if root.batch_mode != "rename" : Field {
                         mono: true;
                         placeholder: "destination folder (tags ok)";
                         text <=> root.dest_text;
-                        edited => { root.output_changed(); }
+                        edited => { root.settings_changed(); }
                     }
                     HorizontalLayout {
                         spacing: 6px;
@@ -683,16 +681,16 @@ export component MainWindow inherits Window {
                             font-size: 10px;
                             vertical-alignment: center;
                         }
-                        Chip { label: "fail"; active: root.collide == "fail";    clicked => { root.collide = "fail";    root.output_changed(); } }
-                        Chip { label: "(2)";  active: root.collide == "number";  clicked => { root.collide = "number";  root.output_changed(); } }
-                        Chip { label: "_b";   active: root.collide == "letter";  clicked => { root.collide = "letter";  root.output_changed(); } }
-                        Chip { label: "tag";  active: root.collide == "pattern"; clicked => { root.collide = "pattern"; root.output_changed(); } }
+                        Chip { label: "fail"; active: root.collide == "fail";    clicked => { root.collide = "fail";    root.settings_changed(); } }
+                        Chip { label: "(2)";  active: root.collide == "number";  clicked => { root.collide = "number";  root.settings_changed(); } }
+                        Chip { label: "_b";   active: root.collide == "letter";  clicked => { root.collide = "letter";  root.settings_changed(); } }
+                        Chip { label: "tag";  active: root.collide == "pattern"; clicked => { root.collide = "pattern"; root.settings_changed(); } }
                     }
                     if root.collide == "pattern" : Field {
                         mono: true;
                         placeholder: "suffix pattern, e.g. _<num>";
                         text <=> root.collide_pattern;
-                        edited => { root.output_changed(); }
+                        edited => { root.settings_changed(); }
                     }
                     Field {
                         mono: true;
@@ -708,13 +706,13 @@ export component MainWindow inherits Window {
                             spacing: 4px;
                             alignment: start;
                             Text { text: "start"; color: Palette.dim; font-size: 10px; }
-                            Field { text <=> root.start_text; mono: true; edited => { root.numbering_changed(); } }
+                            Field { text <=> root.start_text; mono: true; edited => { root.settings_changed(); } }
                         }
                         VerticalLayout {
                             spacing: 4px;
                             alignment: start;
                             Text { text: "pad (blank = auto)"; color: Palette.dim; font-size: 10px; }
-                            Field { text <=> root.pad_text; mono: true; placeholder: "auto"; edited => { root.numbering_changed(); } }
+                            Field { text <=> root.pad_text; mono: true; placeholder: "auto"; edited => { root.settings_changed(); } }
                         }
                     }
                 }
@@ -755,7 +753,7 @@ export component MainWindow inherits Window {
                                 width: 170px;
                                 placeholder: "search list  (Ctrl+F)";
                                 text <=> root.search_text;
-                                edited => { root.search_changed(); }
+                                edited => { root.settings_changed(); }
                             }
                             Field {
                                 width: 190px;
@@ -764,7 +762,7 @@ export component MainWindow inherits Window {
                                 text <=> root.mask_text;
                             }
                             Chip { label: "recurse"; active: root.recurse; clicked => { root.recurse = !root.recurse; } }
-                            Chip { label: "pairs"; active: root.pairs; clicked => { root.pairs = !root.pairs; root.output_changed(); } }
+                            Chip { label: "pairs"; active: root.pairs; clicked => { root.pairs = !root.pairs; root.settings_changed(); } }
                             Rectangle { horizontal-stretch: 1; }
                             Text {
                                 text: "sort";

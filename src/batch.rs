@@ -3,7 +3,7 @@
 // breaks swap cycles safely, and supports copy and cross-volume moves.
 
 use crate::{
-    engine::{Ctx, RuleEntry, apply_entry, name_of, split_ext},
+    engine::{Ctx, RuleEntry, apply_entry, join_ext, name_of, split_ext},
     tags,
 };
 use std::{
@@ -45,6 +45,24 @@ pub enum Collision {
     Number,          // "name (2).ext"
     Letter,          // "name_b.ext"
     Pattern(String), // append a tag-expanded suffix to the stem
+}
+
+impl Collision {
+    /// "fail" | "number" | "letter" | "pattern" (suffix from `pattern`,
+    /// default "_<num>"); anything else is an inline pattern.
+    pub fn parse(policy: &str, pattern: &str) -> Collision {
+        match policy {
+            "fail" => Collision::Fail,
+            "number" => Collision::Number,
+            "letter" => Collision::Letter,
+            "pattern" => Collision::Pattern(if pattern.is_empty() {
+                "_<num>".into()
+            } else {
+                pattern.into()
+            }),
+            p => Collision::Pattern(p.to_string()),
+        }
+    }
 }
 
 pub struct BatchCfg<'a> {
@@ -155,7 +173,7 @@ pub fn plan(files: &[PathBuf], cfg: &BatchCfg) -> Vec<PlanItem> {
     let mut pre: Vec<Pre> = Vec::with_capacity(files.len());
     let mut per_folder: HashMap<String, usize> = HashMap::new();
     let mut pair_primary: HashMap<(String, String), usize> = HashMap::new();
-    let mut ctxs: Vec<(usize, usize)> = Vec::with_capacity(files.len()); // (num, folder_num)
+    let mut folder_nums: Vec<usize> = Vec::with_capacity(files.len());
     for (i, f) in files.iter().enumerate() {
         let original = name_of(f);
         let folder = f
@@ -174,7 +192,7 @@ pub fn plan(files: &[PathBuf], cfg: &BatchCfg) -> Vec<PlanItem> {
             path: f,
             original: &original,
         };
-        ctxs.push((ctx.num, folder_num));
+        folder_nums.push(folder_num);
         let mut name = match cfg.overrides.get(f) {
             Some(o) => o.clone(),
             None => {
@@ -191,13 +209,7 @@ pub fn plan(files: &[PathBuf], cfg: &BatchCfg) -> Vec<PlanItem> {
             let key = (folder.clone(), split_ext(&original).0.to_lowercase());
             match pair_primary.get(&key) {
                 Some(&j) => {
-                    let prim_stem = split_ext(&pre[j].name).0;
-                    let own_ext = split_ext(&original).1;
-                    name = if own_ext.is_empty() {
-                        prim_stem.to_string()
-                    } else {
-                        format!("{prim_stem}.{own_ext}")
-                    };
+                    name = join_ext(split_ext(&pre[j].name).0, split_ext(&original).1);
                 }
                 None => {
                     pair_primary.insert(key, i);
@@ -241,9 +253,9 @@ pub fn plan(files: &[PathBuf], cfg: &BatchCfg) -> Vec<PlanItem> {
         let original = name_of(f);
         let ctx = Ctx {
             index: i,
-            num: ctxs[i].0,
+            num: cfg.start + i,
             pad: cfg.pad,
-            folder_num: ctxs[i].1,
+            folder_num: folder_nums[i],
             path: f,
             original: &original,
         };
@@ -293,11 +305,7 @@ pub fn plan(files: &[PathBuf], cfg: &BatchCfg) -> Vec<PlanItem> {
                     }
                 };
                 let (stem, ext) = split_ext(&p.name);
-                name = if ext.is_empty() {
-                    format!("{stem}{suffix}")
-                } else {
-                    format!("{stem}{suffix}.{ext}")
-                };
+                name = join_ext(&format!("{stem}{suffix}"), ext);
                 if let Some(e) = name_issue(&name) {
                     issue = Some(e);
                     break;
@@ -331,6 +339,21 @@ pub struct ExecResult {
     /// Successful operations in execution order, original path -> final path.
     pub renamed: Vec<Op>,
     pub failed: Vec<(Op, String)>,
+}
+
+/// Final on-disk path of every planned item: the op's target where it
+/// succeeded, the original path otherwise (unchanged, conflicted, or failed).
+pub fn finals(items: &[PlanItem], res: &ExecResult) -> Vec<PathBuf> {
+    items
+        .iter()
+        .map(|it| {
+            res.renamed
+                .iter()
+                .find(|op| op.from == it.from)
+                .map(|op| op.to.clone())
+                .unwrap_or_else(|| it.from.clone())
+        })
+        .collect()
 }
 
 fn transfer(from: &Path, to: &Path, mode: Mode) -> io::Result<()> {

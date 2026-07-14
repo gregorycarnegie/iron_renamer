@@ -11,7 +11,7 @@ pub fn split_ext(name: &str) -> (&str, &str) {
     }
 }
 
-fn join_ext(stem: &str, ext: &str) -> String {
+pub(crate) fn join_ext(stem: &str, ext: &str) -> String {
     if ext.is_empty() {
         stem.to_string()
     } else {

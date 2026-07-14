@@ -315,19 +315,9 @@ pub fn run(args: Vec<String>) {
                 if !get("dest").is_empty() {
                     dest = get("dest").to_string();
                 }
-                collision = match get("collide") {
-                    "number" => batch::Collision::Number,
-                    "letter" => batch::Collision::Letter,
-                    "pattern" => {
-                        let p = get("collide_pattern");
-                        batch::Collision::Pattern(if p.is_empty() {
-                            "_<num>".into()
-                        } else {
-                            p.into()
-                        })
-                    }
-                    _ => collision,
-                };
+                if !get("collide").is_empty() {
+                    collision = batch::Collision::parse(get("collide"), get("collide_pattern"));
+                }
             }
         }
     }
@@ -340,12 +330,7 @@ pub fn run(args: Vec<String>) {
         (mode, dest) = (batch::Mode::Move, path);
     }
     if let Some(policy) = cli.collide {
-        collision = match policy.as_str() {
-            "fail" => batch::Collision::Fail,
-            "number" => batch::Collision::Number,
-            "letter" => batch::Collision::Letter,
-            pattern => batch::Collision::Pattern(pattern.to_string()),
-        };
+        collision = batch::Collision::parse(&policy, "");
     }
     let touch = cli
         .touch
@@ -428,13 +413,7 @@ pub fn run(args: Vec<String>) {
             "name".into()
         }
     });
-    match sort.as_str() {
-        "name" => files.sort_by_cached_key(|f| natural_key(&name_of(f))),
-        "ext" => files.sort_by_cached_key(|f| split_ext(&name_of(f)).1.to_lowercase()),
-        "size" => files.sort_by_cached_key(|f| fs::metadata(f).map(|m| m.len()).unwrap_or(0)),
-        "date" => files.sort_by_cached_key(|f| fs::metadata(f).and_then(|m| m.modified()).ok()),
-        _ => {}
-    }
+    sort_files(&mut files, &sort);
     if desc {
         files.reverse();
     }
@@ -536,16 +515,7 @@ pub fn run(args: Vec<String>) {
     // Timestamps and metadata go on every item at its final location
     // (copies included).
     if touch.is_some() || !cli.set_meta.is_empty() {
-        let finals: Vec<PathBuf> = items
-            .iter()
-            .map(|it| {
-                res.renamed
-                    .iter()
-                    .find(|op| op.from == it.from)
-                    .map(|op| op.to.clone())
-                    .unwrap_or_else(|| it.from.clone())
-            })
-            .collect();
+        let finals = batch::finals(&items, &res);
         if let Some(spec) = &touch {
             let (n, errors) = batch::apply_touch(&finals, spec);
             println!("timestamps set on {n} item(s)");

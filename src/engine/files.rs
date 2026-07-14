@@ -26,6 +26,19 @@ pub fn natural_key(s: &str) -> Vec<(String, u64)> {
     key
 }
 
+/// Sort by "name" (natural), "ext", "size", or "date". Returns false for any
+/// other kind ("none", "manual") and leaves the order untouched.
+pub fn sort_files(files: &mut [PathBuf], kind: &str) -> bool {
+    match kind {
+        "name" => files.sort_by_cached_key(|f| natural_key(&name_of(f))),
+        "ext" => files.sort_by_cached_key(|f| super::split_ext(&name_of(f)).1.to_lowercase()),
+        "size" => files.sort_by_cached_key(|f| fs::metadata(f).map(|m| m.len()).unwrap_or(0)),
+        "date" => files.sort_by_cached_key(|f| fs::metadata(f).and_then(|m| m.modified()).ok()),
+        _ => return false,
+    }
+    true
+}
+
 // PowerShell doesn't expand globs, so handle * and ? ourselves.
 // `dirs` switches matching from files to folders.
 pub fn expand(arg: &str, dirs: bool) -> Vec<PathBuf> {
