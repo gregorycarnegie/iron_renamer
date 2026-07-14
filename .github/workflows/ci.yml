@@ -1,0 +1,23 @@
+name: CI
+
+on:
+  push:
+    paths: &code
+      - "src/**"
+      - "ui/**"
+      - "build.rs"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain*"
+      - ".cargo/**"
+      - ".github/workflows/ci.yml"
+  pull_request:
+    paths: *code
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --locked

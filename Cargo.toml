@@ -2,6 +2,7 @@
 name = "iron_renamer"
 version = "0.1.0"
 edition = "2024"
+license = "MIT"
 
 [dependencies]
 # Sandboxed JS rules; no IO exposed by design. 0.20 pinned: 0.21 wants
