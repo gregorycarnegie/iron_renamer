@@ -58,8 +58,8 @@ Compared with the [Advanced Renamer v4 user guide](https://www.advancedrenamer.c
 - [ ] Add common image dimensions/date-taken, audio artist/album/track, video duration, and document author/title tags.
 - [ ] Add file-pair mode so sidecars and alternate formats with the same stem receive the same generated name.
 - [ ] Add a Timestamp rule for created/modified/accessed times using absolute, delta, filename-pattern, parent-folder, or metadata values.
-- [ ] Let the CLI execute a saved preset against a directory, recursive tree, item-list file, or explicit files, with masks/regex, sorting, verify-only mode, and a result log. (partly done: `--preset` runs a saved preset against globs/files, preview is the verify mode, `--export` is the log; missing: recursive tree and item-list input)
-- [ ] Add keyboard shortcuts for add/remove/select/search, manual override, and starting a batch.
+- [x] Let the CLI execute a saved preset against a directory, recursive tree, item-list file, or explicit files, with masks/regex, sorting, verify-only mode, and a result log. (`--in DIR --recurse --mask`, `--list FILE`, `--sort/--desc`, preview = verify mode, `--export` writes the preview or — with `--apply` — the result log)
+- [x] Add keyboard shortcuts for add/remove/select/search, manual override, and starting a batch. (Ctrl+O add · ↑/↓ select · Ctrl+↑/↓ reorder · Del remove · Ctrl+F search · F2 override · Ctrl+Z undo · Ctrl+Enter start · Esc deselect; active while no text field has focus)
 
 ## P3 — only if real users need full parity
 

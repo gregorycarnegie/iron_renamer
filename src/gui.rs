@@ -1,12 +1,12 @@
 // Slint GUI front-end over the shared engine. Live preview on every change.
 
 use crate::batch::{self, BatchCfg, Collision, Mode, Op};
-use crate::engine::{RuleEntry, build_rule, name_of, natural_key, split_ext, wild_match};
+use crate::engine::{Masks, RuleEntry, build_rule, collect_dir, name_of, natural_key, split_ext};
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::rc::Rc;
 
 slint::include_modules!();
@@ -54,46 +54,6 @@ struct State {
     overrides: HashMap<PathBuf, String>, // per-item manual new names
     dirs: bool, // list holds folders, not files — never mixed
     can_undo: bool,
-}
-
-// Include/exclude filename masks: "*.jpg;*.png;!*thumb*".
-struct Masks {
-    inc: Vec<String>,
-    exc: Vec<String>,
-}
-
-impl Masks {
-    fn parse(s: &str) -> Masks {
-        let (mut inc, mut exc) = (Vec::new(), Vec::new());
-        for m in s.split(';').map(str::trim).filter(|m| !m.is_empty()) {
-            match m.strip_prefix('!') {
-                Some(x) => exc.push(x.to_lowercase()),
-                None => inc.push(m.to_lowercase()),
-            }
-        }
-        Masks { inc, exc }
-    }
-
-    fn pass(&self, name: &str) -> bool {
-        let n = name.to_lowercase();
-        (self.inc.is_empty() || self.inc.iter().any(|m| wild_match(m, &n)))
-            && !self.exc.iter().any(|m| wild_match(m, &n))
-    }
-}
-
-fn collect_dir(dir: &Path, recurse: bool, masks: &Masks, out: &mut Vec<PathBuf>) {
-    if let Ok(entries) = fs::read_dir(dir) {
-        for e in entries.flatten() {
-            let p = e.path();
-            if p.is_dir() {
-                if recurse {
-                    collect_dir(&p, true, masks, out);
-                }
-            } else if p.is_file() && masks.pass(&name_of(&p)) {
-                out.push(p);
-            }
-        }
-    }
 }
 
 // One batch never mixes files and folders.

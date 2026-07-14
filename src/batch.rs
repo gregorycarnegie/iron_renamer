@@ -422,6 +422,54 @@ pub fn export_preview(items: &[PlanItem], path: &Path) -> io::Result<()> {
     fs::write(path, body)
 }
 
+/// Write an execution result log to `path` (.csv, .json, or text).
+pub fn export_results(res: &ExecResult, path: &Path) -> io::Result<()> {
+    use crate::presets::{csv_field, json_str};
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+    let rows: Vec<(&Op, String)> = res
+        .renamed
+        .iter()
+        .map(|op| (op, "done".to_string()))
+        .chain(res.failed.iter().map(|(op, e)| (op, format!("failed: {e}"))))
+        .collect();
+    let body = match ext.as_str() {
+        "csv" => {
+            let mut s = String::from("from,to,result\n");
+            for (op, r) in &rows {
+                s.push_str(&format!(
+                    "{},{},{}\n",
+                    csv_field(&op.from.display().to_string()),
+                    csv_field(&op.to.display().to_string()),
+                    csv_field(r),
+                ));
+            }
+            s
+        }
+        "json" => {
+            let objs: Vec<String> = rows
+                .iter()
+                .map(|(op, r)| {
+                    format!(
+                        "  {{\"from\": {}, \"to\": {}, \"result\": {}}}",
+                        json_str(&op.from.display().to_string()),
+                        json_str(&op.to.display().to_string()),
+                        json_str(r),
+                    )
+                })
+                .collect();
+            format!("[\n{}\n]\n", objs.join(",\n"))
+        }
+        _ => {
+            let mut s = String::new();
+            for (op, r) in &rows {
+                s.push_str(&format!("{}  ->  {}   [{r}]\n", op.from.display(), op.to.display()));
+            }
+            s
+        }
+    };
+    fs::write(path, body)
+}
+
 // ───────────────────────── history
 
 fn history_path() -> PathBuf {

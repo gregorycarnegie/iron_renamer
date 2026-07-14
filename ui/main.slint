@@ -37,6 +37,7 @@ component Field inherits Rectangle {
     in-out property <string> text <=> ti.text;
     in property <bool> mono: false;
     callback edited();
+    public function grab() { ti.focus(); }
     height: 30px;
     background: Palette.inset;
     border-radius: 5px;
@@ -201,6 +202,36 @@ export component MainWindow inherits Window {
     callback export_preview();
     callback save_preset();
     callback load_preset();
+
+    forward-focus: keys;
+
+    keys := FocusScope {
+        key-pressed(e) => {
+            if (e.modifiers.control && e.text == "o") { root.pick_files(); return accept; }
+            if (e.modifiers.control && e.text == "f") { search-field.grab(); return accept; }
+            if (e.modifiers.control && e.text == "z") { if (root.can_undo) { root.undo_batch(); } return accept; }
+            if (e.modifiers.control && e.text == Key.Return) { if (root.changed > 0) { root.apply_batch(); } return accept; }
+            if (e.text == Key.F2) { if (root.selected_row >= 0) { override-field.grab(); } return accept; }
+            if (e.text == Key.Delete) { if (root.selected_row >= 0) { root.remove_selected(); } return accept; }
+            if (e.text == Key.Escape) { root.selected_row = -1; root.row_clicked(-1); return accept; }
+            if (e.text == Key.UpArrow) {
+                if (e.modifiers.control) { root.move_selected(-1); }
+                else if (root.files.length > 0) {
+                    root.selected_row = max(0, root.selected_row - 1);
+                    root.row_clicked(root.selected_row);
+                }
+                return accept;
+            }
+            if (e.text == Key.DownArrow) {
+                if (e.modifiers.control) { root.move_selected(1); }
+                else if (root.files.length > 0) {
+                    root.selected_row = min(root.files.length - 1, root.selected_row + 1);
+                    root.row_clicked(root.selected_row);
+                }
+                return accept;
+            }
+            reject
+        }
 
     VerticalLayout {
         padding: 0;
@@ -659,7 +690,7 @@ export component MainWindow inherits Window {
                 spacing: 0;
 
                 Rectangle {
-                    height: root.selected_row >= 0 ? 132px : 92px;
+                    height: 132px;
                     VerticalLayout {
                         padding-left: 16px;
                         padding-right: 16px;
@@ -682,9 +713,9 @@ export component MainWindow inherits Window {
                         HorizontalLayout {
                             spacing: 8px;
                             height: 30px;
-                            Field {
+                            search-field := Field {
                                 width: 170px;
-                                placeholder: "search list";
+                                placeholder: "search list  (Ctrl+F)";
                                 text <=> root.search_text;
                                 edited => { root.search_changed(); }
                             }
@@ -712,20 +743,23 @@ export component MainWindow inherits Window {
                                 clicked => { root.sort_desc = !root.sort_desc; root.sort_changed(); }
                             }
                         }
-                        if root.selected_row >= 0 : HorizontalLayout {
+                        HorizontalLayout {
                             spacing: 8px;
                             height: 30px;
                             Text {
-                                text: "row " + (root.selected_row + 1);
-                                color: Palette.amber;
+                                text: root.selected_row >= 0 ? "row " + (root.selected_row + 1) : "no row";
+                                width: 52px;
+                                color: root.selected_row >= 0 ? Palette.amber : Palette.faint;
                                 font-size: 11px;
                                 font-family: "Cascadia Mono";
                                 vertical-alignment: center;
                             }
-                            Field {
+                            override-field := Field {
                                 horizontal-stretch: 1;
                                 mono: true;
-                                placeholder: "manual new name (blank = use rules)";
+                                placeholder: root.selected_row >= 0
+                                    ? "manual new name (blank = use rules)  (F2)"
+                                    : "click a row to select — ↑/↓ move selection, Ctrl+↑/↓ reorder, Del removes";
                                 text <=> root.override_text;
                                 edited => { root.set_override(); }
                             }
@@ -766,9 +800,15 @@ export component MainWindow inherits Window {
                             horizontal-alignment: center;
                         }
                         Text {
-                            text: "No files loaded — click ＋ Files or drop files here";
+                            text: "No files loaded — click ＋ Files (Ctrl+O) or drop files here";
                             color: Palette.faint;
                             font-size: 13px;
+                            horizontal-alignment: center;
+                        }
+                        Text {
+                            text: "Ctrl+F search · ↑/↓ select · Ctrl+↑/↓ reorder · Del remove · F2 override · Ctrl+Z undo · Ctrl+Enter start";
+                            color: Palette.faint;
+                            font-size: 11px;
                             horizontal-alignment: center;
                         }
                     }
@@ -891,5 +931,6 @@ export component MainWindow inherits Window {
                 }
             }
         }
+    }
     }
 }

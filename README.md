@@ -34,6 +34,9 @@ iron_renamer                 # or the built exe / after cargo install --path .
 - **Rename N files** applies the batch; **Undo last batch** reverts it
   (moves included; copies are not undoable). Batches are recorded in a
   dated history, so undo works across restarts too.
+- Shortcuts (when no text field has focus): Ctrl+O add files · Ctrl+F search ·
+  ↑/↓ select · Ctrl+↑/↓ reorder · Del remove · F2 manual override ·
+  Ctrl+Z undo · Ctrl+Enter start · Esc deselect.
 
 ## CLI
 
@@ -81,7 +84,11 @@ OPTIONS:
   --collide <POLICY>           fail | number ("name (2)") | letter ("name_b")
                                | anything else = tag pattern suffix
   --preset <FILE|NAME>         load rules/settings from a saved preset
-  --export <FILE>              write the preview (.csv, .json, or text)
+  --export <FILE>              write the preview — or, with --apply, the
+                               result log (.csv, .json, or text)
+  --in <DIR> [--recurse]       take files from DIR; --mask "*.jpg;!*thumb*"
+  --list <FILE>                take files from a list (keeps its order)
+  --sort <name|ext|size|date|none> [--desc]
   -d, --dirs                   rename folders instead of files
   -x, --apply                  actually rename (otherwise preview only)
 ```

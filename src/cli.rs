@@ -62,7 +62,15 @@ OPTIONS:
                                value = tag pattern appended to the stem
   --preset <FILE|NAME>         load rules and settings from a saved preset
                                (bare names look in the preset folder)
-  --export <FILE>              write the preview to FILE (.csv, .json, or text)
+  --export <FILE>              write the preview — or, with --apply, the
+                               results — to FILE (.csv, .json, or text)
+  --in <DIR>                   take files from DIR (repeatable)
+  --recurse                    make --in recursive
+  --mask <MASKS>               filter --in files: \"*.jpg;*.png;!*thumb*\"
+  --list <FILE>                take files from a list, one path per line
+                               (keeps list order unless --sort is given)
+  --sort <name|ext|size|date|none>   sort order (default: natural by name)
+  --desc                       reverse the sort order
   -d, --dirs                   rename folders instead of files
   -x, --apply                  actually rename (otherwise preview only)
 
@@ -88,8 +96,19 @@ pub fn run(args: Vec<String>) {
     let mut dest = String::new();
     let mut collision = batch::Collision::Fail;
     let mut export: Option<PathBuf> = None;
-    // Pre-scan so --dirs applies to globs regardless of argument order.
+    let mut sort: Option<String> = None;
+    let mut desc = false;
+    let mut from_list = false;
+    // Pre-scan flags that must apply regardless of argument order.
     let dirs = args.iter().any(|a| a == "-d" || a == "--dirs");
+    let recurse = args.iter().any(|a| a == "--recurse");
+    let masks = Masks::parse(
+        args.iter()
+            .position(|a| a == "--mask")
+            .and_then(|i| args.get(i + 1))
+            .map(String::as_str)
+            .unwrap_or(""),
+    );
 
     let mut it = args.into_iter();
     while let Some(a) = it.next() {
@@ -207,6 +226,40 @@ pub fn run(args: Vec<String>) {
                 let v = need(1, &mut it);
                 export = Some(PathBuf::from(&v[0]));
             }
+            "--in" => {
+                let v = need(1, &mut it);
+                let dir = PathBuf::from(&v[0]);
+                if !dir.is_dir() {
+                    die(&format!("--in: '{}' is not a folder", v[0]));
+                }
+                collect_dir(&dir, recurse, &masks, &mut files);
+            }
+            "--recurse" => {}
+            "--mask" => {
+                need(1, &mut it); // consumed in the pre-scan
+            }
+            "--list" => {
+                let v = need(1, &mut it);
+                let body = fs::read_to_string(&v[0])
+                    .unwrap_or_else(|e| die(&format!("cannot read list '{}': {e}", v[0])));
+                for line in body.lines().map(str::trim).filter(|l| !l.is_empty()) {
+                    let p = PathBuf::from(line);
+                    if p.exists() {
+                        files.push(p);
+                    } else {
+                        eprintln!("warning: '{line}' not found, skipped");
+                    }
+                }
+                from_list = true;
+            }
+            "--sort" => {
+                let v = need(1, &mut it);
+                if !matches!(v[0].as_str(), "name" | "ext" | "size" | "date" | "none") {
+                    die("--sort takes name|ext|size|date|none");
+                }
+                sort = Some(v[0].clone());
+            }
+            "--desc" => desc = true,
             "--copy-to" => {
                 let v = need(1, &mut it);
                 (mode, dest) = (batch::Mode::Copy, v[0].clone());
@@ -256,8 +309,21 @@ pub fn run(args: Vec<String>) {
         }
     }
 
-    // Natural sort so photo_9 numbers before photo_10.
-    files.sort_by_key(|f| natural_key(&name_of(f)));
+    // Natural name sort by default so photo_9 numbers before photo_10;
+    // a --list keeps its own order unless a sort is asked for.
+    let sort = sort.unwrap_or_else(|| if from_list { "none".into() } else { "name".into() });
+    match sort.as_str() {
+        "name" => files.sort_by_key(|f| natural_key(&name_of(f))),
+        "ext" => files.sort_by_key(|f| split_ext(&name_of(f)).1.to_lowercase()),
+        "size" => files.sort_by_key(|f| fs::metadata(f).map(|m| m.len()).unwrap_or(0)),
+        "date" => files.sort_by_key(|f| fs::metadata(f).and_then(|m| m.modified()).ok()),
+        _ => {}
+    }
+    if desc {
+        files.reverse();
+    }
+    let mut seen = std::collections::HashSet::new();
+    files.retain(|f| seen.insert(f.clone()));
 
     if pad == 0 {
         pad = (start + files.len() - 1).to_string().len();
@@ -266,7 +332,10 @@ pub fn run(args: Vec<String>) {
     let overrides = std::collections::HashMap::new();
     let cfg = batch::BatchCfg { rules: &rules, start, pad, overrides: &overrides, mode, dest: &dest, collision };
     let items = batch::plan(&files, &cfg);
-    if let Some(path) = &export {
+    // With --apply the export becomes a result log, written after execution.
+    if let Some(path) = &export
+        && !apply
+    {
         match batch::export_preview(&items, path) {
             Ok(_) => println!("preview exported to {}", path.display()),
             Err(e) => die(&format!("export failed: {e}")),
@@ -323,6 +392,12 @@ pub fn run(args: Vec<String>) {
     }
     for (op, e) in &res.failed {
         eprintln!("FAILED {} -> {}: {e}", op.from.display(), op.to.display());
+    }
+    if let Some(path) = &export {
+        match batch::export_results(&res, path) {
+            Ok(_) => println!("result log written to {}", path.display()),
+            Err(e) => eprintln!("warning: could not write result log: {e}"),
+        }
     }
     println!("\n{done} {} of {planned} item(s)", res.renamed.len());
     if !res.failed.is_empty() {
