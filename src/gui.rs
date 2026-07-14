@@ -64,6 +64,7 @@ struct State {
     overrides: HashMap<PathBuf, String>, // per-item manual new names
     dirs: bool,                          // list holds folders, not files — never mixed
     can_undo: bool,
+    editing: Option<usize>, // stack index loaded into the rule form, if any
 }
 
 // One batch never mixes files and folders.
@@ -138,7 +139,12 @@ fn apply_preset(ui: &MainWindow, st: &Rc<RefCell<State>>, p: &std::path::Path) {
                 }
             }
             let n = specs.len();
-            st.borrow_mut().rules = specs;
+            {
+                let mut s = st.borrow_mut();
+                s.rules = specs;
+                s.editing = None; // the stack was replaced wholesale
+            }
+            ui.set_editing_rule(-1);
             let get = |k: &str| preset.settings.get(k).cloned().unwrap_or_default();
             let or = |v: String, d: &str| if v.is_empty() { d.to_string() } else { v };
             ui.set_start_text(or(get("start"), "1").into());
@@ -544,7 +550,13 @@ pub fn run(initial: Vec<PathBuf>) -> Result<(), slint::PlatformError> {
         };
         match spec.build() {
             Ok(_) => {
-                st.borrow_mut().rules.push(spec);
+                let mut s = st.borrow_mut();
+                match s.editing.take() {
+                    Some(i) if i < s.rules.len() => s.rules[i] = spec,
+                    _ => s.rules.push(spec),
+                }
+                drop(s);
+                ui.set_editing_rule(-1);
                 ui.set_field_a("".into());
                 ui.set_field_b("".into());
                 refresh(&ui, &st.borrow());
@@ -553,10 +565,75 @@ pub fn run(initial: Vec<PathBuf>) -> Result<(), slint::PlatformError> {
         }
     });
 
+    // Click a stack row: load it into the form; Save replaces it in place.
+    // Clicking the row being edited cancels.
+    on!(on_edit_rule, |ui, st, i: i32| {
+        let i = i as usize;
+        let spec = {
+            let mut s = st.borrow_mut();
+            if s.editing == Some(i) {
+                s.editing = None;
+                ui.set_editing_rule(-1);
+                return;
+            }
+            let Some(spec) = s.rules.get(i).cloned() else {
+                return;
+            };
+            s.editing = Some(i);
+            spec
+        };
+        // Option chips: defaults first, then the rule's mods.
+        ui.set_apply_part("both".into());
+        ui.set_replace_ci(false);
+        ui.set_replace_occ("all".into());
+        ui.set_pairs_ci(false);
+        ui.set_trim_at("both".into());
+        ui.set_trim_inv(false);
+        for m in spec.mods.split(':').filter(|m| !m.is_empty()) {
+            match m {
+                "name" | "stem" => ui.set_apply_part("name".into()),
+                "ext" => ui.set_apply_part("ext".into()),
+                "ci" if spec.kind == "pairs" => ui.set_pairs_ci(true),
+                "ci" => ui.set_replace_ci(true),
+                "first" | "last" => ui.set_replace_occ(m.into()),
+                "start" | "end" | "all" => ui.set_trim_at(m.into()),
+                "inv" => ui.set_trim_inv(true),
+                _ => {} // n<N>/pad<N> have no chip; saving drops them
+            }
+        }
+        if spec.kind == "case" {
+            ui.set_case_mode(spec.a.into());
+            ui.set_field_a("".into());
+        } else {
+            ui.set_field_a(spec.a.into());
+        }
+        ui.set_field_b(spec.b.into());
+        ui.set_new_kind(spec.kind.into());
+        ui.set_editing_rule(i as i32);
+    });
+
+    on!(on_cancel_edit, |ui, st| {
+        st.borrow_mut().editing = None;
+        ui.set_editing_rule(-1);
+        ui.set_field_a("".into());
+        ui.set_field_b("".into());
+    });
+
     on!(on_remove_rule, |ui, st, i: i32| {
         let mut s = st.borrow_mut();
         if (i as usize) < s.rules.len() {
             s.rules.remove(i as usize);
+            match s.editing {
+                Some(e) if e == i as usize => {
+                    s.editing = None;
+                    ui.set_editing_rule(-1);
+                }
+                Some(e) if e > i as usize => {
+                    s.editing = Some(e - 1);
+                    ui.set_editing_rule((e - 1) as i32);
+                }
+                _ => {}
+            }
         }
         drop(s);
         refresh(&ui, &st.borrow());
@@ -567,6 +644,18 @@ pub fn run(initial: Vec<PathBuf>) -> Result<(), slint::PlatformError> {
         let (from, to) = (from as usize, to as isize);
         if from < s.rules.len() && to >= 0 && (to as usize) < s.rules.len() {
             s.rules.swap(from, to as usize);
+            // The edit highlight follows the rule it belongs to.
+            match s.editing {
+                Some(e) if e == from => {
+                    s.editing = Some(to as usize);
+                    ui.set_editing_rule(to as i32);
+                }
+                Some(e) if e == to as usize => {
+                    s.editing = Some(from);
+                    ui.set_editing_rule(from as i32);
+                }
+                _ => {}
+            }
         }
         drop(s);
         refresh(&ui, &st.borrow());

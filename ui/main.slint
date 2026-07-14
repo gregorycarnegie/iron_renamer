@@ -174,6 +174,9 @@ export component MainWindow inherits Window {
     callback add_rule();
     callback remove_rule(int);
     callback move_rule(int, int);
+    callback edit_rule(int);   // click a stack row: load it into the form
+    callback cancel_edit();
+    in-out property <int> editing_rule: -1;
     callback apply_batch();
     callback undo_batch();
     callback settings_changed();
@@ -550,7 +553,7 @@ export component MainWindow inherits Window {
                         border-color: #ffa02866;
                         animate background { duration: 120ms; }
                         Text {
-                            text: "+ ADD RULE";
+                            text: root.editing_rule >= 0 ? "✓ SAVE RULE" : "+ ADD RULE";
                             color: Palette.amber;
                             font-size: 11px;
                             font-weight: 800;
@@ -561,6 +564,11 @@ export component MainWindow inherits Window {
                             vertical-alignment: center;
                         }
                         add-ta := TouchArea { clicked => { root.add_rule(); } }
+                    }
+
+                    if root.editing_rule >= 0 : Chip {
+                        label: "✕ cancel edit";
+                        clicked => { root.cancel_edit(); }
                     }
 
                     HorizontalLayout {
@@ -661,7 +669,9 @@ export component MainWindow inherits Window {
                         border-radius: 6px;
                         background: Palette.inset;
                         border-width: 1px;
-                        border-color: Palette.line-soft;
+                        border-color: i == root.editing_rule ? Palette.amber : Palette.line-soft;
+                        // Click a row to edit it in the form (buttons stay on top).
+                        TouchArea { clicked => { root.edit_rule(i); } }
                         HorizontalLayout {
                             padding-left: 10px;
                             padding-right: 6px;

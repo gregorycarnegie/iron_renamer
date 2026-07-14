@@ -23,6 +23,8 @@ iron_renamer                 # or the built exe / after cargo install --path .
 - Click a row to select it: reorder with ▲/▼, remove it, or type a manual
   new name that bypasses the rules. Search filters the view; sort by
   name/ext/size/date in either direction. Numbering follows list order.
+- Click a rule in the stack to edit it in the form (the button becomes
+  **✓ Save rule**); click it again or **✕ cancel edit** to back out.
 - Preview is live — every edit recomputes the table. Conflicts (duplicate targets,
   name already on disk, reserved Windows names, over-long paths) show per-row
   in red and are skipped on rename.
