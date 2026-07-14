@@ -1,5 +1,9 @@
 # Iron Renamer
 
+[![Rust 2024](https://img.shields.io/badge/Rust-2024-orange?logo=rust)](https://www.rust-lang.org/)
+[![Slint 1.17](https://img.shields.io/badge/GUI-Slint_1.17-2379f4)](https://slint.dev/)
+![CLI and GUI](https://img.shields.io/badge/interfaces-CLI_%2B_GUI-555)
+
 Batch file renamer in Rust — a personal, minimal take on [Advanced Renamer](https://www.advancedrenamer.com/).
 One binary, two faces: run with no arguments for the GUI (Slint), with arguments for the CLI.
 
@@ -12,8 +16,13 @@ cargo run --release          # from the repo
 iron_renamer                 # or the built exe / after cargo install --path .
 ```
 
-- Load files with **＋ Files** / **＋ From folder**, or rename folders themselves
-  with **＋ Folders** (a batch is either all files or all folders, never mixed).
+- Load files with **＋ Files** / **＋ From folder** (with optional recursion and
+  `*.jpg;!*thumb*` masks), drag-and-drop from Explorer, or rename folders
+  themselves with **＋ Folders** (a batch is either all files or all folders,
+  never mixed). Save/load the list as plain text.
+- Click a row to select it: reorder with ▲/▼, remove it, or type a manual
+  new name that bypasses the rules. Search filters the view; sort by
+  name/ext/size/date in either direction. Numbering follows list order.
 - Preview is live — every edit recomputes the table. Conflicts (duplicate targets,
   name already on disk, reserved Windows names, over-long paths) show per-row
   in red and are skipped on rename.
@@ -105,6 +114,6 @@ cargo test
 
 ## Not included (on purpose)
 
-Metadata tags (EXIF/ID3), move/copy modes, drag-and-drop.
+Metadata tags (EXIF/ID3), move/copy modes.
 The rule engine is the extension point — a new `Rule` variant in `engine.rs`
 shows up in both front-ends.

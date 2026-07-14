@@ -1,11 +1,12 @@
 // Slint GUI front-end over the shared engine. Live preview on every change.
 
 use crate::batch::{self, Op};
-use crate::engine::{build_rule, name_of, natural_key, RuleEntry};
+use crate::engine::{RuleEntry, build_rule, name_of, natural_key, split_ext, wild_match};
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 slint::include_modules!();
@@ -50,8 +51,105 @@ impl RuleSpec {
 struct State {
     files: Vec<PathBuf>,
     rules: Vec<RuleSpec>,
+    overrides: HashMap<PathBuf, String>, // per-item manual new names
     dirs: bool, // list holds folders, not files — never mixed
     can_undo: bool,
+}
+
+// Include/exclude filename masks: "*.jpg;*.png;!*thumb*".
+struct Masks {
+    inc: Vec<String>,
+    exc: Vec<String>,
+}
+
+impl Masks {
+    fn parse(s: &str) -> Masks {
+        let (mut inc, mut exc) = (Vec::new(), Vec::new());
+        for m in s.split(';').map(str::trim).filter(|m| !m.is_empty()) {
+            match m.strip_prefix('!') {
+                Some(x) => exc.push(x.to_lowercase()),
+                None => inc.push(m.to_lowercase()),
+            }
+        }
+        Masks { inc, exc }
+    }
+
+    fn pass(&self, name: &str) -> bool {
+        let n = name.to_lowercase();
+        (self.inc.is_empty() || self.inc.iter().any(|m| wild_match(m, &n)))
+            && !self.exc.iter().any(|m| wild_match(m, &n))
+    }
+}
+
+fn collect_dir(dir: &Path, recurse: bool, masks: &Masks, out: &mut Vec<PathBuf>) {
+    if let Ok(entries) = fs::read_dir(dir) {
+        for e in entries.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                if recurse {
+                    collect_dir(&p, true, masks, out);
+                }
+            } else if p.is_file() && masks.pass(&name_of(&p)) {
+                out.push(p);
+            }
+        }
+    }
+}
+
+// One batch never mixes files and folders.
+fn mode_blocked(ui: &MainWindow, s: &State, want_dirs: bool) -> bool {
+    if !s.files.is_empty() && s.dirs != want_dirs {
+        ui.set_status_text(
+            if s.dirs {
+                "list holds folders — Clear it before adding files"
+            } else {
+                "list holds files — Clear it before adding folders"
+            }
+            .into(),
+        );
+        return true;
+    }
+    false
+}
+
+// New items arrive natural-sorted among themselves but never disturb the
+// existing order, so manual reordering sticks.
+fn add_files(s: &mut State, mut paths: Vec<PathBuf>) {
+    paths.sort_by_key(|p| natural_key(&name_of(p)));
+    for p in paths {
+        if !s.files.contains(&p) {
+            s.files.push(p);
+        }
+    }
+}
+
+// OS drag-and-drop: files add as files; a folder adds its contents with the
+// current mask/recurse settings, unless the list is already in folder mode.
+fn handle_drop(ui: &MainWindow, st: &Rc<RefCell<State>>, path: PathBuf) {
+    if path.is_dir() {
+        let folder_mode = { st.borrow().dirs && !st.borrow().files.is_empty() };
+        if folder_mode {
+            add_files(&mut st.borrow_mut(), vec![path]);
+        } else {
+            if mode_blocked(ui, &st.borrow(), false) {
+                return;
+            }
+            let masks = Masks::parse(&ui.get_mask_text());
+            let mut found = Vec::new();
+            collect_dir(&path, ui.get_recurse(), &masks, &mut found);
+            let mut s = st.borrow_mut();
+            s.dirs = false;
+            add_files(&mut s, found);
+        }
+    } else {
+        if mode_blocked(ui, &st.borrow(), false) {
+            return;
+        }
+        let mut s = st.borrow_mut();
+        s.dirs = false;
+        add_files(&mut s, vec![path]);
+    }
+    refresh(ui, &st.borrow());
 }
 
 pub fn run() -> Result<(), slint::PlatformError> {
@@ -71,15 +169,19 @@ pub fn run() -> Result<(), slint::PlatformError> {
         }};
     }
 
-    // One batch never mixes files and folders.
-    fn mode_blocked(ui: &MainWindow, s: &State, want_dirs: bool) -> bool {
-        if !s.files.is_empty() && s.dirs != want_dirs {
-            ui.set_status_text(
-                if s.dirs { "list holds folders — Clear it before adding files" } else { "list holds files — Clear it before adding folders" }.into(),
-            );
-            return true;
-        }
-        false
+    // OS file drop (winit backend).
+    {
+        use slint::winit_030::{EventResult, WinitWindowAccessor, winit::event::WindowEvent};
+        let weak = ui.as_weak();
+        let st = state.clone();
+        ui.window().on_winit_window_event(move |_, ev| {
+            if let WindowEvent::DroppedFile(path) = ev
+                && let Some(ui) = weak.upgrade()
+            {
+                handle_drop(&ui, &st, path.clone());
+            }
+            EventResult::Propagate
+        });
     }
 
     on!(on_pick_files, |ui, st| {
@@ -100,16 +202,12 @@ pub fn run() -> Result<(), slint::PlatformError> {
             return;
         }
         if let Some(dir) = rfd::FileDialog::new().pick_folder() {
-            let files = fs::read_dir(&dir)
-                .into_iter()
-                .flatten()
-                .flatten()
-                .map(|e| e.path())
-                .filter(|p| p.is_file())
-                .collect();
+            let masks = Masks::parse(&ui.get_mask_text());
+            let mut found = Vec::new();
+            collect_dir(&dir, ui.get_recurse(), &masks, &mut found);
             let mut s = st.borrow_mut();
             s.dirs = false;
-            add_files(&mut s, files);
+            add_files(&mut s, found);
             drop(s);
             refresh(&ui, &st.borrow());
         }
@@ -131,8 +229,137 @@ pub fn run() -> Result<(), slint::PlatformError> {
     on!(on_clear_files, |ui, st| {
         let mut s = st.borrow_mut();
         s.files.clear();
+        s.overrides.clear();
         s.dirs = false;
         drop(s);
+        ui.set_selected_row(-1);
+        ui.set_override_text("".into());
+        refresh(&ui, &st.borrow());
+    });
+
+    on!(on_save_list, |ui, st| {
+        let s = st.borrow();
+        if s.files.is_empty() {
+            ui.set_status_text("nothing to save".into());
+            return;
+        }
+        if let Some(p) = rfd::FileDialog::new()
+            .add_filter("text", &["txt"])
+            .set_file_name("filelist.txt")
+            .save_file()
+        {
+            let body: String = s.files.iter().map(|f| format!("{}\n", f.display())).collect();
+            let msg = match fs::write(&p, body) {
+                Ok(_) => format!("saved {} item(s) to {}", s.files.len(), p.display()),
+                Err(e) => format!("save failed: {e}"),
+            };
+            drop(s);
+            ui.set_status_text(msg.into());
+        }
+    });
+
+    on!(on_load_list, |ui, st| {
+        let Some(p) = rfd::FileDialog::new().add_filter("text", &["txt"]).pick_file() else {
+            return;
+        };
+        let body = match fs::read_to_string(&p) {
+            Ok(b) => b,
+            Err(e) => {
+                ui.set_status_text(format!("load failed: {e}").into());
+                return;
+            }
+        };
+        let paths: Vec<PathBuf> =
+            body.lines().map(str::trim).filter(|l| !l.is_empty()).map(PathBuf::from).collect();
+        let total = paths.len();
+        // A list is folders only if every line is one; otherwise keep the files.
+        let dirs_mode = !paths.is_empty() && paths.iter().all(|p| p.is_dir());
+        let keep: Vec<PathBuf> =
+            paths.into_iter().filter(|p| if dirs_mode { p.is_dir() } else { p.is_file() }).collect();
+        let skipped = total - keep.len();
+        let mut s = st.borrow_mut();
+        s.files = keep;
+        s.dirs = dirs_mode;
+        s.overrides.clear();
+        let n = s.files.len();
+        drop(s);
+        ui.set_selected_row(-1);
+        refresh(&ui, &st.borrow());
+        ui.set_status_text(
+            match skipped {
+                0 => format!("loaded {n} item(s)"),
+                _ => format!("loaded {n} item(s), skipped {skipped} missing"),
+            }
+            .into(),
+        );
+    });
+
+    on!(on_remove_selected, |ui, st| {
+        let i = ui.get_selected_row();
+        let mut s = st.borrow_mut();
+        if i >= 0 && (i as usize) < s.files.len() {
+            let p = s.files.remove(i as usize);
+            s.overrides.remove(&p);
+        }
+        drop(s);
+        ui.set_selected_row(-1);
+        ui.set_override_text("".into());
+        refresh(&ui, &st.borrow());
+    });
+
+    on!(on_move_selected, |ui, st, delta: i32| {
+        let i = ui.get_selected_row();
+        let j = i + delta;
+        let moved = {
+            let mut s = st.borrow_mut();
+            if i >= 0 && j >= 0 && (i as usize) < s.files.len() && (j as usize) < s.files.len() {
+                s.files.swap(i as usize, j as usize);
+                true
+            } else {
+                false
+            }
+        };
+        if moved {
+            ui.set_selected_row(j);
+            refresh(&ui, &st.borrow());
+        }
+    });
+
+    on!(on_set_override, |ui, st| {
+        let i = ui.get_selected_row();
+        let text = ui.get_override_text().to_string();
+        let mut s = st.borrow_mut();
+        if i >= 0 && (i as usize) < s.files.len() {
+            let p = s.files[i as usize].clone();
+            if text.is_empty() {
+                s.overrides.remove(&p);
+            } else {
+                s.overrides.insert(p, text);
+            }
+        }
+        drop(s);
+        refresh(&ui, &st.borrow());
+    });
+
+    on!(on_sort_changed, |ui, st| {
+        let kind = ui.get_sort_by().to_string();
+        let mut s = st.borrow_mut();
+        match kind.as_str() {
+            "name" => s.files.sort_by_key(|f| natural_key(&name_of(f))),
+            "ext" => s.files.sort_by_key(|f| split_ext(&name_of(f)).1.to_lowercase()),
+            "size" => s.files.sort_by_key(|f| fs::metadata(f).map(|m| m.len()).unwrap_or(0)),
+            "date" => s.files.sort_by_key(|f| fs::metadata(f).and_then(|m| m.modified()).ok()),
+            _ => return, // manual order
+        }
+        if ui.get_sort_desc() {
+            s.files.reverse();
+        }
+        drop(s);
+        ui.set_selected_row(-1);
+        refresh(&ui, &st.borrow());
+    });
+
+    on!(on_search_changed, |ui, st| {
         refresh(&ui, &st.borrow());
     });
 
@@ -213,8 +440,12 @@ pub fn run() -> Result<(), slint::PlatformError> {
         }
     });
 
-    // Item details in the status bar.
+    // Selection: item details in the status bar, override field preloaded.
     on!(on_row_clicked, |ui, st, i: i32| {
+        if i < 0 {
+            ui.set_override_text("".into());
+            return;
+        }
         let s = st.borrow();
         let Some(f) = s.files.get(i as usize) else { return };
         let msg = match fs::metadata(f) {
@@ -227,7 +458,9 @@ pub fn run() -> Result<(), slint::PlatformError> {
             ),
             Err(_) => f.display().to_string(),
         };
+        let over = s.overrides.get(f).cloned().unwrap_or_default();
         drop(s);
+        ui.set_override_text(over.into());
         ui.set_status_text(msg.into());
     });
 
@@ -244,6 +477,7 @@ pub fn run() -> Result<(), slint::PlatformError> {
             if let Some(f) = s.files.iter_mut().find(|f| **f == op.from) {
                 *f = op.to.clone();
             }
+            s.overrides.remove(&op.from); // override served its purpose
         }
         if !res.renamed.is_empty() {
             s.can_undo = true;
@@ -288,15 +522,6 @@ pub fn run() -> Result<(), slint::PlatformError> {
     ui.run()
 }
 
-fn add_files(s: &mut State, paths: Vec<PathBuf>) {
-    for p in paths {
-        if !s.files.contains(&p) {
-            s.files.push(p);
-        }
-    }
-    s.files.sort_by_key(|f| natural_key(&name_of(f)));
-}
-
 struct Computed {
     rows: Vec<FileRow>,
     plan: Vec<Op>, // only conflict-free changes
@@ -312,16 +537,19 @@ fn compute(ui: &MainWindow, s: &State) -> Computed {
         .unwrap_or_else(|_| (start + s.files.len().max(1) - 1).to_string().len());
     let rules: Vec<RuleEntry> = s.rules.iter().filter_map(|r| r.build().ok()).collect();
 
-    let items = batch::plan(&s.files, &rules, start, pad);
+    let items = batch::plan(&s.files, &rules, start, pad, &s.overrides);
     let mut rows = Vec::new();
     let mut plan = Vec::new();
     let (mut changed, mut errors) = (0, 0);
     for (i, item) in items.iter().enumerate() {
-        let (state, status) = match (item.changed, &item.issue) {
+        let (state, mut status) = match (item.changed, &item.issue) {
             (false, _) => (0, String::new()),
             (true, None) => (1, "ok".into()),
             (true, Some(e)) => (2, e.clone()),
         };
+        if state == 1 && s.overrides.contains_key(&item.from) {
+            status = "manual".into();
+        }
         match state {
             1 => {
                 changed += 1;
@@ -348,7 +576,19 @@ fn refresh(ui: &MainWindow, s: &State) {
     ui.set_changed(c.changed);
     ui.set_errors(c.errors);
     ui.set_can_undo(s.can_undo);
-    ui.set_files(ModelRc::new(VecModel::from(c.rows)));
+    // Search filters the view only; numbering and counts follow the full list.
+    let q = ui.get_search_text().to_lowercase();
+    let rows: Vec<FileRow> = if q.is_empty() {
+        c.rows
+    } else {
+        c.rows
+            .into_iter()
+            .filter(|r| {
+                r.old_name.to_lowercase().contains(&q) || r.new_name.to_lowercase().contains(&q)
+            })
+            .collect()
+    };
+    ui.set_files(ModelRc::new(VecModel::from(rows)));
     let rules: Vec<RuleRow> = s
         .rules
         .iter()

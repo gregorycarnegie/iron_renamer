@@ -192,7 +192,7 @@ pub fn run(args: Vec<String>) {
         pad = (start + files.len() - 1).to_string().len();
     }
 
-    let items = batch::plan(&files, &rules, start, pad);
+    let items = batch::plan(&files, &rules, start, pad, &std::collections::HashMap::new());
     let mut ops: Vec<Op> = Vec::new();
     let mut conflicts = 0;
     for item in items.iter().filter(|i| i.changed) {

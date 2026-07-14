@@ -4,6 +4,7 @@
 // Every applied batch is recorded in a dated history file for selective undo.
 
 use crate::engine::{Ctx, RuleEntry, apply_entry, name_of};
+use std::collections::HashMap;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -61,19 +62,32 @@ pub fn name_issue(name: &str) -> Option<String> {
 /// Apply rules to every file and flag issues: bad names, in-batch duplicate
 /// targets, on-disk collisions, and over-long paths. Case-only renames are
 /// valid (NTFS handles them); collision checks are case-insensitive like NTFS.
-pub fn plan(files: &[PathBuf], rules: &[RuleEntry], start: usize, pad: usize) -> Vec<PlanItem> {
+/// A manual override replaces the rule result for that file but is validated
+/// the same way.
+pub fn plan(
+    files: &[PathBuf],
+    rules: &[RuleEntry],
+    start: usize,
+    pad: usize,
+    overrides: &HashMap<PathBuf, String>,
+) -> Vec<PlanItem> {
     let lower = |s: &str| s.to_lowercase();
     let mut names: Vec<String> = Vec::with_capacity(files.len());
-    let mut per_folder: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut per_folder: HashMap<String, usize> = HashMap::new();
     for (i, f) in files.iter().enumerate() {
         let original = name_of(f);
         let folder = f.parent().map(|p| lower(&p.to_string_lossy())).unwrap_or_default();
         let folder_num = per_folder.entry(folder).and_modify(|n| *n += 1).or_insert(1);
         let ctx =
             Ctx { index: i, num: start + i, pad, folder_num: *folder_num, path: f, original: &original };
-        let mut name = original.clone();
-        for e in rules {
-            name = apply_entry(e, &name, &ctx);
+        let mut name = match overrides.get(f) {
+            Some(o) => o.clone(),
+            None => original.clone(),
+        };
+        if !overrides.contains_key(f) {
+            for e in rules {
+                name = apply_entry(e, &name, &ctx);
+            }
         }
         names.push(name);
     }
@@ -394,16 +408,17 @@ mod tests {
         put(&d, "other.jpg", "");
         let files = vec![d.join("img1.jpg"), d.join("img2.jpg")];
 
+        let none = HashMap::new();
         let case_rule = rules(&[("replace", "img", "IMG")]);
-        let items = plan(&files, &case_rule, 1, 1);
+        let items = plan(&files, &case_rule, 1, 1, &none);
         assert!(items.iter().all(|i| i.changed && i.issue.is_none()), "case-only renames are valid");
 
         let dup_rule = rules(&[("pattern", "same.jpg", "")]);
-        let items = plan(&files, &dup_rule, 1, 1);
+        let items = plan(&files, &dup_rule, 1, 1, &none);
         assert!(items.iter().all(|i| i.issue.as_deref() == Some("duplicate target")));
 
         let clash_rule = rules(&[("replace", "img1", "other")]);
-        let items = plan(&files, &clash_rule, 1, 1);
+        let items = plan(&files, &clash_rule, 1, 1, &none);
         assert_eq!(items[0].issue.as_deref(), Some("target exists"));
         assert!(items[1].issue.is_none());
 
@@ -413,8 +428,18 @@ mod tests {
             ("replace", "img2", "img1"),
             ("replace", "tmpX", "img2"),
         ]);
-        let items = plan(&files, &swap_rule, 1, 1);
+        let items = plan(&files, &swap_rule, 1, 1, &none);
         assert!(items.iter().all(|i| i.changed && i.issue.is_none()));
+
+        // A manual override wins over rules but is validated like any name.
+        let over: HashMap<PathBuf, String> =
+            [(files[0].clone(), "manual.jpg".to_string())].into();
+        let items = plan(&files, &case_rule, 1, 1, &over);
+        assert_eq!(items[0].new_name, "manual.jpg");
+        assert!(items[0].issue.is_none());
+        let bad: HashMap<PathBuf, String> = [(files[0].clone(), "CON.jpg".to_string())].into();
+        let items = plan(&files, &case_rule, 1, 1, &bad);
+        assert_eq!(items[0].issue.as_deref(), Some("reserved Windows name"));
     }
 
     #[test]

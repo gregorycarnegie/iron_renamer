@@ -177,7 +177,21 @@ export component MainWindow inherits Window {
     callback numbering_changed();
     callback insert_tag(string);
     callback row_clicked(int);
+    callback save_list();
+    callback load_list();
+    callback remove_selected();
+    callback move_selected(int);
+    callback set_override();
+    callback sort_changed();
+    callback search_changed();
     in-out property <bool> show_tags: false;
+    in-out property <int> selected_row: -1;
+    in-out property <string> search_text: "";
+    in-out property <string> mask_text: "";
+    in-out property <bool> recurse: false;
+    in-out property <string> sort_by: "manual";
+    in-out property <bool> sort_desc: false;
+    in-out property <string> override_text: "";
 
     VerticalLayout {
         padding: 0;
@@ -597,18 +611,78 @@ export component MainWindow inherits Window {
                 spacing: 0;
 
                 Rectangle {
-                    height: 52px;
-                    HorizontalLayout {
+                    height: root.selected_row >= 0 ? 132px : 92px;
+                    VerticalLayout {
                         padding-left: 16px;
                         padding-right: 16px;
-                        padding-top: 11px;
-                        padding-bottom: 11px;
+                        padding-top: 10px;
+                        padding-bottom: 10px;
                         spacing: 8px;
-                        ToolButton { label: "＋ Files";  width: 90px;  clicked => { root.pick_files(); } }
-                        ToolButton { label: "＋ From folder"; width: 116px; clicked => { root.pick_folder(); } }
-                        ToolButton { label: "＋ Folders"; width: 96px; clicked => { root.pick_dirs(); } }
-                        ToolButton { label: "Clear"; danger: true; width: 70px; clicked => { root.clear_files(); } }
-                        Rectangle { horizontal-stretch: 1; }
+                        HorizontalLayout {
+                            spacing: 8px;
+                            height: 30px;
+                            ToolButton { label: "＋ Files";  width: 84px;  clicked => { root.pick_files(); } }
+                            ToolButton { label: "＋ From folder"; width: 112px; clicked => { root.pick_folder(); } }
+                            ToolButton { label: "＋ Folders"; width: 92px; clicked => { root.pick_dirs(); } }
+                            ToolButton { label: "Clear"; danger: true; width: 64px; clicked => { root.clear_files(); } }
+                            Rectangle { horizontal-stretch: 1; }
+                            ToolButton { label: "Save list"; width: 84px; clicked => { root.save_list(); } }
+                            ToolButton { label: "Load list"; width: 84px; clicked => { root.load_list(); } }
+                        }
+                        HorizontalLayout {
+                            spacing: 8px;
+                            height: 30px;
+                            Field {
+                                width: 170px;
+                                placeholder: "search list";
+                                text <=> root.search_text;
+                                edited => { root.search_changed(); }
+                            }
+                            Field {
+                                width: 190px;
+                                mono: true;
+                                placeholder: "masks: *.jpg;!*thumb*";
+                                text <=> root.mask_text;
+                            }
+                            Chip { label: "recurse"; active: root.recurse; clicked => { root.recurse = !root.recurse; } }
+                            Rectangle { horizontal-stretch: 1; }
+                            Text {
+                                text: "sort";
+                                color: Palette.faint;
+                                font-size: 10px;
+                                vertical-alignment: center;
+                            }
+                            Chip { label: "name"; active: root.sort_by == "name"; clicked => { root.sort_by = "name"; root.sort_changed(); } }
+                            Chip { label: "ext";  active: root.sort_by == "ext";  clicked => { root.sort_by = "ext";  root.sort_changed(); } }
+                            Chip { label: "size"; active: root.sort_by == "size"; clicked => { root.sort_by = "size"; root.sort_changed(); } }
+                            Chip { label: "date"; active: root.sort_by == "date"; clicked => { root.sort_by = "date"; root.sort_changed(); } }
+                            Chip {
+                                label: root.sort_desc ? "↓" : "↑";
+                                active: root.sort_desc;
+                                clicked => { root.sort_desc = !root.sort_desc; root.sort_changed(); }
+                            }
+                        }
+                        if root.selected_row >= 0 : HorizontalLayout {
+                            spacing: 8px;
+                            height: 30px;
+                            Text {
+                                text: "row " + (root.selected_row + 1);
+                                color: Palette.amber;
+                                font-size: 11px;
+                                font-family: "Cascadia Mono";
+                                vertical-alignment: center;
+                            }
+                            Field {
+                                horizontal-stretch: 1;
+                                mono: true;
+                                placeholder: "manual new name (blank = use rules)";
+                                text <=> root.override_text;
+                                edited => { root.set_override(); }
+                            }
+                            ToolButton { label: "▲"; width: 34px; clicked => { root.move_selected(-1); } }
+                            ToolButton { label: "▼"; width: 34px; clicked => { root.move_selected(1); } }
+                            ToolButton { label: "Remove"; danger: true; width: 76px; clicked => { root.remove_selected(); } }
+                        }
                     }
                     Rectangle { y: parent.height - 1px; height: 1px; background: Palette.line-soft; }
                 }
@@ -642,7 +716,7 @@ export component MainWindow inherits Window {
                             horizontal-alignment: center;
                         }
                         Text {
-                            text: "No files loaded — click ＋ Files or ＋ Folder";
+                            text: "No files loaded — click ＋ Files or drop files here";
                             color: Palette.faint;
                             font-size: 13px;
                             horizontal-alignment: center;
@@ -654,8 +728,14 @@ export component MainWindow inherits Window {
                     vertical-stretch: 1;
                     for row in root.files : Rectangle {
                         height: 30px;
-                        background: touch.has-hover ? Palette.line-soft : (mod(row.index, 2) == 0 ? transparent : #14161b);
-                        touch := TouchArea { clicked => { root.row_clicked(row.index); } }
+                        background: root.selected_row == row.index ? #ffa02818
+                            : (touch.has-hover ? Palette.line-soft : (mod(row.index, 2) == 0 ? transparent : #14161b));
+                        touch := TouchArea {
+                            clicked => {
+                                root.selected_row = root.selected_row == row.index ? -1 : row.index;
+                                root.row_clicked(root.selected_row);
+                            }
+                        }
                         HorizontalLayout {
                             padding-left: 16px;
                             padding-right: 16px;

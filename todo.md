@@ -15,12 +15,12 @@ Compared with the [Advanced Renamer v4 user guide](https://www.advancedrenamer.c
 
 ### File list
 
-- [ ] Add drag-and-drop for files and folders.
-- [ ] Let users remove selected rows and reorder rows (numbering follows list order), instead of only clearing everything.
-- [ ] Add recursive folder loading plus include/exclude masks such as `*.jpg;*.png`.
-- [ ] Add list search, sort controls, and ascending/descending order.
-- [ ] Save and load plain-text file lists.
-- [ ] Allow a per-item manual new-name override.
+- [x] Add drag-and-drop for files and folders. (winit `DroppedFile` hook; dropped folders load contents per mask/recurse settings, or add as folder items in folder mode)
+- [x] Let users remove selected rows and reorder rows (numbering follows list order), instead of only clearing everything. (click a row to select; ▲/▼/Remove in the selection bar)
+- [x] Add recursive folder loading plus include/exclude masks such as `*.jpg;*.png`. (`recurse` toggle; masks field, `!` prefix excludes)
+- [x] Add list search, sort controls, and ascending/descending order. (search filters the view only; sort by name/ext/size/date reorders the list)
+- [x] Save and load plain-text file lists.
+- [x] Allow a per-item manual new-name override. (select a row, type in the override field; overrides bypass rules but are validated the same)
 
 ### Rules
 

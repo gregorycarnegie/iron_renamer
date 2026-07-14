@@ -5,7 +5,7 @@ edition = "2024"
 
 [dependencies]
 regex = "1.13.0"
-slint = "1.17.1"
+slint = { version = "1.17.1", features = ["unstable-winit-030"] } # winit feature: OS file drag-and-drop
 rfd = "0.17.2"
 
 [build-dependencies]
