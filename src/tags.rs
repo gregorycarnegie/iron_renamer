@@ -19,6 +19,7 @@
 //             OFFSET like +3d -12h +30m
 // Random      <rand[:MIN[:MAX]]> <rands[:LEN]>
 // Metadata    <exif:TAG> (any ExifTool tag) plus aliases <width> <height>
+//             <lat> <lon> (signed decimal GPS)
 //             <datetaken> <artist> <album> <track> <title> <duration>
 //             <author> — need a user-installed ExifTool; values are
 //             sanitized for file names (':' becomes '-'). A tag missing
@@ -156,6 +157,9 @@ fn eval(body: &str, full_name: &str, ctx: &Ctx) -> Option<String> {
         "title" => meta_alias(ctx, &["title"])?,
         "duration" => meta_alias(ctx, &["duration"])?,
         "author" => meta_alias(ctx, &["author", "creator"])?,
+        // Signed decimal via the -c format passed to ExifTool (see meta.rs).
+        "lat" => meta_alias(ctx, &["gpslatitude"])?,
+        "lon" => meta_alias(ctx, &["gpslongitude"])?,
         _ => return None,
     };
     for m in parts {

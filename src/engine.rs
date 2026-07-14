@@ -8,7 +8,7 @@ mod files;
 mod parse;
 
 pub(crate) use apply::change_case;
-pub use apply::{apply_entry, split_ext};
+pub use apply::{apply_entry, reset_js, split_ext};
 #[cfg(test)]
 use files::wild_match;
 pub use files::{Masks, collect_dir, expand, name_of, natural_key};
@@ -109,6 +109,7 @@ pub enum Rule {
     },
     Swap(String),           // swap around first separator: "a - b" -> "b - a"
     ListNames(Vec<String>), // one explicit new name per list position
+    Js(String),             // sandboxed script; completion value = new name
 }
 
 pub enum CondField {

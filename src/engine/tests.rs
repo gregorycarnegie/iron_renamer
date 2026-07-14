@@ -319,3 +319,36 @@ fn natural_sort_and_glob() {
     assert!(wild_match("img?.png", "img1.png"));
     assert!(!wild_match("*.jpg", "photo.png"));
 }
+
+#[test]
+fn js_rule_sandboxed_eval() {
+    // Result of the last expression becomes the new name.
+    assert_eq!(
+        run(&entry("js", &[], "name.toUpperCase()", ""), "a.jpg"),
+        "A.JPG"
+    );
+    // Globals: stem/ext/index/num; apply-to :name keeps the extension.
+    assert_eq!(
+        run(&entry("js", &["name"], "stem + '_' + num", ""), "a.jpg"),
+        "a_7.jpg"
+    );
+    // undefined and runtime errors leave the name unchanged.
+    assert_eq!(run(&entry("js", &[], "undefined", ""), "a.jpg"), "a.jpg");
+    assert_eq!(run(&entry("js", &[], "nope()", ""), "a.jpg"), "a.jpg");
+    // Syntax errors are caught when the rule is built.
+    assert!(build_rule("js", &[], "this is not js", "").is_err());
+    // Sandbox: no file or process access is exposed.
+    assert_eq!(
+        run(
+            &entry("js", &[], "typeof require + '-' + typeof process", ""),
+            "a.jpg"
+        ),
+        "undefined-undefined"
+    );
+    // Script globals persist across items until reset_js (pre-batch state).
+    let e = entry("js", &["name"], "if (typeof n == 'undefined') n = 0; n += 1; stem + n", "");
+    assert_eq!(run(&e, "a.jpg"), "a1.jpg");
+    assert_eq!(run(&e, "a.jpg"), "a2.jpg");
+    reset_js();
+    assert_eq!(run(&e, "a.jpg"), "a1.jpg");
+}

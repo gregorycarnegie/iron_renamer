@@ -120,7 +120,47 @@ fn handle_drop(ui: &MainWindow, st: &Rc<RefCell<State>>, path: PathBuf) {
     refresh(ui, &st.borrow());
 }
 
-pub fn run() -> Result<(), slint::PlatformError> {
+// Load a preset file into the rule list and settings (Load-preset button,
+// initial .preset argument, or .preset file association).
+fn apply_preset(ui: &MainWindow, st: &Rc<RefCell<State>>, p: &std::path::Path) {
+    match crate::presets::load(p) {
+        Ok(preset) => {
+            let mut specs = Vec::new();
+            let mut bad = 0;
+            for (kind, mods, a, b) in preset.rules {
+                let spec = RuleSpec { kind, a, b, mods };
+                if spec.build().is_ok() {
+                    specs.push(spec);
+                } else {
+                    bad += 1;
+                }
+            }
+            let n = specs.len();
+            st.borrow_mut().rules = specs;
+            let get = |k: &str| preset.settings.get(k).cloned().unwrap_or_default();
+            let or = |v: String, d: &str| if v.is_empty() { d.to_string() } else { v };
+            ui.set_start_text(or(get("start"), "1").into());
+            ui.set_pad_text(get("pad").into());
+            ui.set_batch_mode(or(get("mode"), "rename").into());
+            ui.set_dest_text(get("dest").into());
+            ui.set_collide(or(get("collide"), "fail").into());
+            ui.set_collide_pattern(get("collide_pattern").into());
+            refresh(ui, &st.borrow());
+            ui.set_status_text(
+                match bad {
+                    0 => format!("loaded {n} rule(s) from preset"),
+                    _ => format!("loaded {n} rule(s) from preset, {bad} invalid"),
+                }
+                .into(),
+            );
+        }
+        Err(e) => ui.set_status_text(e.into()),
+    }
+}
+
+/// `initial` paths (from the Explorer context menu or `iron_renamer gui`)
+/// load as if dropped on the window; a .preset file loads as a preset.
+pub fn run(initial: Vec<PathBuf>) -> Result<(), slint::PlatformError> {
     let ui = MainWindow::new()?;
     let state = Rc::new(RefCell::new(State::default()));
     state.borrow_mut().can_undo = !batch::history().is_empty();
@@ -397,39 +437,7 @@ pub fn run() -> Result<(), slint::PlatformError> {
         else {
             return;
         };
-        match crate::presets::load(&p) {
-            Ok(preset) => {
-                let mut specs = Vec::new();
-                let mut bad = 0;
-                for (kind, mods, a, b) in preset.rules {
-                    let spec = RuleSpec { kind, a, b, mods };
-                    if spec.build().is_ok() {
-                        specs.push(spec);
-                    } else {
-                        bad += 1;
-                    }
-                }
-                let n = specs.len();
-                st.borrow_mut().rules = specs;
-                let get = |k: &str| preset.settings.get(k).cloned().unwrap_or_default();
-                let or = |v: String, d: &str| if v.is_empty() { d.to_string() } else { v };
-                ui.set_start_text(or(get("start"), "1").into());
-                ui.set_pad_text(get("pad").into());
-                ui.set_batch_mode(or(get("mode"), "rename").into());
-                ui.set_dest_text(get("dest").into());
-                ui.set_collide(or(get("collide"), "fail").into());
-                ui.set_collide_pattern(get("collide_pattern").into());
-                refresh(&ui, &st.borrow());
-                ui.set_status_text(
-                    match bad {
-                        0 => format!("loaded {n} rule(s) from preset"),
-                        _ => format!("loaded {n} rule(s) from preset, {bad} invalid"),
-                    }
-                    .into(),
-                );
-            }
-            Err(e) => ui.set_status_text(e.into()),
-        }
+        apply_preset(&ui, st, &p);
     });
 
     on!(on_remove_selected, |ui, st| {
@@ -714,6 +722,14 @@ pub fn run() -> Result<(), slint::PlatformError> {
         refresh(&ui, &st.borrow());
         ui.set_status_text(msg.into());
     });
+
+    for p in initial {
+        if p.extension().is_some_and(|e| e.eq_ignore_ascii_case("preset")) {
+            apply_preset(&ui, &state, &p);
+        } else {
+            handle_drop(&ui, &state, p);
+        }
+    }
 
     ui.run()
 }

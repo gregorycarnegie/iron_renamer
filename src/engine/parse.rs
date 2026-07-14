@@ -270,6 +270,19 @@ pub fn build_rule(kind: &str, mods: &[&str], a: &str, b: &str) -> Result<(Rule, 
             }
             Rule::ListNames(a.lines().map(|l| l.trim_end().to_string()).collect())
         }
+        "js" => {
+            if let Some(m) = rest.first() {
+                return Err(unknown(m));
+            }
+            if a.is_empty() {
+                return Err("js needs a script".into());
+            }
+            // Catch syntax errors now; runtime errors leave names unchanged.
+            let mut c = boa_engine::Context::default();
+            boa_engine::Script::parse(boa_engine::Source::from_bytes(a), None, &mut c)
+                .map_err(|e| format!("bad js: {e}"))?;
+            Rule::Js(a.into())
+        }
         other => return Err(format!("unknown rule kind '{other}'")),
     };
     Ok((rule, part))

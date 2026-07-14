@@ -73,7 +73,59 @@ fn apply_rule(rule: &Rule, s: &str, full: &str, ctx: &Ctx) -> String {
             .get(ctx.index)
             .cloned()
             .unwrap_or_else(|| s.to_string()),
+        Rule::Js(src) => eval_js(src, s, full, ctx),
     }
+}
+
+// ───────────────────────── sandboxed JS rules
+//
+// Boa exposes no filesystem or network by default, and we register nothing
+// beyond plain values — that IS the sandbox, and the "explicit file-read
+// permission" granted is none. One engine context is reused across a batch
+// (reset by plan()), so script globals persist item to item: pre-batch
+// state is just `if (typeof n == 'undefined') n = 0;`.
+thread_local! {
+    static JS: std::cell::RefCell<Option<boa_engine::Context>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Drop the shared JS context so a new batch/preview starts stateless.
+pub fn reset_js() {
+    JS.with(|c| *c.borrow_mut() = None);
+}
+
+/// Run `src` with globals name/ext/stem/original/path/index/num set for this
+/// item. The script's completion value becomes the new name; undefined/null
+/// or any runtime error leaves the name unchanged.
+pub(super) fn eval_js(src: &str, s: &str, full: &str, ctx: &Ctx) -> String {
+    use boa_engine::{Context, JsString, JsValue, Source, property::Attribute};
+    JS.with(|cell| {
+        let mut slot = cell.borrow_mut();
+        let jsctx = slot.get_or_insert_with(Context::default);
+        let (stem, ext) = split_ext(full);
+        let vars: &[(&str, JsValue)] = &[
+            ("name", JsString::from(s).into()),
+            ("stem", JsString::from(stem).into()),
+            ("ext", JsString::from(ext).into()),
+            ("original", JsString::from(ctx.original).into()),
+            (
+                "path",
+                JsString::from(ctx.path.to_string_lossy().as_ref()).into(),
+            ),
+            ("index", JsValue::from(ctx.index as f64)),
+            ("num", JsValue::from(ctx.num as f64)),
+        ];
+        for (k, v) in vars {
+            let _ = jsctx.register_global_property(JsString::from(*k), v.clone(), Attribute::all());
+        }
+        match jsctx.eval(Source::from_bytes(src)) {
+            Ok(v) if !v.is_null_or_undefined() => v
+                .to_string(jsctx)
+                .map(|js| js.to_std_string_escaped())
+                .unwrap_or_else(|_| s.to_string()),
+            _ => s.to_string(),
+        }
+    })
 }
 
 fn cond_matches(c: &Cond, current: &str, ctx: &Ctx) -> bool {

@@ -144,6 +144,7 @@ fn lower_abs(p: &Path) -> String {
 /// suffix so the preview already shows the final result. Case-only renames
 /// are valid; collision checks are case-insensitive like NTFS.
 pub fn plan(files: &[PathBuf], cfg: &BatchCfg) -> Vec<PlanItem> {
+    crate::engine::reset_js(); // JS rule state never leaks between previews/batches
     struct Pre {
         name: String,
         dest_dir: PathBuf,

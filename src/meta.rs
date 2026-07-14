@@ -56,6 +56,30 @@ pub fn get(path: &Path, tag: &str) -> Option<String> {
     )
 }
 
+/// Write metadata tags ("TAG=VALUE" each) on files in one ExifTool call.
+/// Returns ExifTool's summary line (e.g. "2 image files updated").
+pub fn set(paths: &[PathBuf], assigns: &[String]) -> Result<String, String> {
+    let t = tool().ok_or("ExifTool not found (install it or set IRON_RENAMER_EXIFTOOL)")?;
+    let mut cmd = Command::new(t);
+    cmd.arg("-overwrite_original").arg("-m");
+    for a in assigns {
+        cmd.arg(format!("-{a}"));
+    }
+    cmd.args(paths);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000);
+    }
+    let out = cmd.output().map_err(|e| e.to_string())?;
+    let text = |b: &[u8]| String::from_utf8_lossy(b).trim().to_string();
+    if out.status.success() {
+        Ok(text(&out.stdout))
+    } else {
+        Err(text(&out.stderr))
+    }
+}
+
 type Fields = Rc<HashMap<String, String>>;
 
 fn fields(path: &Path) -> Option<Fields> {
@@ -74,13 +98,16 @@ fn fields(path: &Path) -> Option<Fields> {
 
 fn read_fields(path: &Path) -> Option<Fields> {
     let t = tool()?;
-    // -s2: "TagName: value" lines · -fast: skip slow scans · -m: ignore minor errors
+    // -s2: "TagName: value" lines · -fast: skip slow scans · -m: ignore minor
+    // errors · -c: GPS coordinates as signed decimal (file-name friendly)
     let out = run(
         t,
         &[
             OsStr::new("-s2"),
             OsStr::new("-fast"),
             OsStr::new("-m"),
+            OsStr::new("-c"),
+            OsStr::new("%+.6f"),
             path.as_os_str(),
         ],
     )?;

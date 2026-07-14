@@ -14,7 +14,7 @@ mod tags;
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.is_empty() {
-        if let Err(e) = gui::run() {
+        if let Err(e) = gui::run(Vec::new()) {
             eprintln!("GUI error: {e}");
             std::process::exit(1);
         }

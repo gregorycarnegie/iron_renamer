@@ -25,7 +25,10 @@ RULES are applied in order given. Every rule flag takes suffix mods, e.g.
         yyyy yy MM dd HH mm ss, OFFSET like +3d -12h
         metadata (needs ExifTool on PATH or IRON_RENAMER_EXIFTOOL) --
         <exif:TAG> plus <width> <height> <datetaken> <artist> <album>
-        <track> <title> <duration> <author>
+        <track> <title> <duration> <author> <lat> <lon>
+  JS:   --js runs a sandboxed script per item (no file/network access);
+        globals name ext stem original path index num; the script's last
+        expression becomes the new name; globals persist across the batch
   MODS: |upper |lower |title |sub:START[,LEN] |pad:N |trim[:CHARS]
         |replace:OLD[,NEW] |fallback:TEXT |+N |-N |*N |/N
 
@@ -86,6 +89,12 @@ struct Cli {
     swap: Vec<String>,
     #[arg(long, value_name = "FILE", help = "Use one new name per line")]
     names: Vec<String>,
+    #[arg(
+        long,
+        value_name = "SCRIPT|FILE",
+        help = "JavaScript rule (sandboxed, no file access); result = new name"
+    )]
+    js: Vec<String>,
     #[arg(long = "if", num_args = 2, value_names = ["COND", "VALUE"], help = "Condition the previous rule")]
     conditions: Vec<String>,
     #[arg(
@@ -159,6 +168,13 @@ struct Cli {
         help = "Set timestamps after the batch"
     )]
     touch: Option<String>,
+    #[arg(
+        long = "set-meta",
+        value_name = "TAG=VALUE",
+        allow_hyphen_values = true,
+        help = "Write a metadata tag after the batch (needs ExifTool; repeatable)"
+    )]
+    set_meta: Vec<String>,
     #[arg(short = 'd', long, help = "Rename folders instead of files")]
     dirs: bool,
     #[arg(short = 'x', long, help = "Apply changes (default: preview)")]
@@ -173,6 +189,13 @@ enum CliCommand {
     History,
     /// Revert a batch (the latest if no ID is given).
     Undo { id: Option<u64> },
+    /// Open the GUI, preloading files, folders, or a .preset.
+    Gui { paths: Vec<PathBuf> },
+    /// Add "Rename with Iron Renamer" to Explorer menus and associate
+    /// .preset files (current user only, no admin needed).
+    Register,
+    /// Remove the Explorer integration added by register.
+    Unregister,
 }
 
 enum RuleEvent {
@@ -207,6 +230,14 @@ pub fn run(args: Vec<String>) {
     match cli.command {
         Some(CliCommand::Undo { id }) => return undo(id),
         Some(CliCommand::History) => return history(),
+        Some(CliCommand::Gui { paths }) => {
+            if let Err(e) = crate::gui::run(paths) {
+                die(&format!("GUI error: {e}"));
+            }
+            return;
+        }
+        Some(CliCommand::Register) => return registry(true),
+        Some(CliCommand::Unregister) => return registry(false),
         None => {}
     }
 
@@ -231,6 +262,13 @@ pub fn run(args: Vec<String>) {
                     values[0] = fs::read_to_string(&values[0]).unwrap_or_else(|e| {
                         die(&format!("cannot read names file '{}': {e}", values[0]))
                     });
+                }
+                // --js takes inline script text or a path to a script file.
+                if kind == "js"
+                    && std::path::Path::new(&values[0]).is_file()
+                    && let Ok(body) = fs::read_to_string(&values[0])
+                {
+                    values[0] = body;
                 }
                 let mods: Vec<&str> = mods.iter().map(String::as_str).collect();
                 let b = values.get(1).map(String::as_str).unwrap_or("");
@@ -346,7 +384,12 @@ pub fn run(args: Vec<String>) {
     let desc = cli.desc;
     let pairs = cli.pairs;
 
-    if rules.is_empty() && dest.is_empty() && touch.is_none() {
+    for a in &cli.set_meta {
+        if !a.contains('=') {
+            die(&format!("--set-meta '{a}' must be TAG=VALUE"));
+        }
+    }
+    if rules.is_empty() && dest.is_empty() && touch.is_none() && cli.set_meta.is_empty() {
         die("no rules given (see --help)");
     }
     if files.is_empty() {
@@ -449,7 +492,7 @@ pub fn run(args: Vec<String>) {
         }
     }
 
-    if ops.is_empty() && conflicts == 0 && touch.is_none() {
+    if ops.is_empty() && conflicts == 0 && touch.is_none() && cli.set_meta.is_empty() {
         println!("nothing to {verb} ({} item(s) unchanged)", files.len());
         return;
     }
@@ -461,6 +504,9 @@ pub fn run(args: Vec<String>) {
         );
         if touch.is_some() {
             println!("timestamps will be set on {} item(s)", files.len());
+        }
+        if !cli.set_meta.is_empty() {
+            println!("metadata will be written on {} item(s)", files.len());
         }
         if conflicts > 0 {
             eprintln!("{conflicts} conflict(s) must be fixed first");
@@ -487,8 +533,9 @@ pub fn run(args: Vec<String>) {
             Err(e) => eprintln!("warning: could not write result log: {e}"),
         }
     }
-    // Timestamps go on every item at its final location (copies included).
-    if let Some(spec) = &touch {
+    // Timestamps and metadata go on every item at its final location
+    // (copies included).
+    if touch.is_some() || !cli.set_meta.is_empty() {
         let finals: Vec<PathBuf> = items
             .iter()
             .map(|it| {
@@ -499,10 +546,18 @@ pub fn run(args: Vec<String>) {
                     .unwrap_or_else(|| it.from.clone())
             })
             .collect();
-        let (n, errors) = batch::apply_touch(&finals, spec);
-        println!("timestamps set on {n} item(s)");
-        for e in &errors {
-            eprintln!("TOUCH FAILED {e}");
+        if let Some(spec) = &touch {
+            let (n, errors) = batch::apply_touch(&finals, spec);
+            println!("timestamps set on {n} item(s)");
+            for e in &errors {
+                eprintln!("TOUCH FAILED {e}");
+            }
+        }
+        if !cli.set_meta.is_empty() {
+            match crate::meta::set(&finals, &cli.set_meta) {
+                Ok(msg) => println!("metadata: {msg}"),
+                Err(e) => eprintln!("METADATA FAILED: {e}"),
+            }
         }
     }
     if planned > 0 {
@@ -554,6 +609,7 @@ fn rule_id(flag: &str) -> Option<&'static str> {
         "--move" => "move_rule",
         "--swap" => "swap",
         "--names" => "names",
+        "--js" => "js",
         _ => return None,
     })
 }
@@ -580,6 +636,7 @@ fn rule_events(
     add!("move_rule", "move", 2, &cli.move_rule);
     add!("swap", "swap", 1, &cli.swap);
     add!("names", "names", 1, &cli.names);
+    add!("js", "js", 1, &cli.js);
 
     let positions: Vec<usize> = matches
         .indices_of("conditions")
@@ -657,6 +714,57 @@ fn history() {
         println!("{id:<15} {date:<18} {n}");
     }
     println!("\n'iron_renamer undo <ID>' reverts a batch");
+}
+
+// Explorer integration: per-user context-menu verbs on files and folders,
+// plus a .preset file association, written with reg.exe (no new dependency).
+// Explorer's classic verbs launch one GUI instance per selected item.
+#[cfg(windows)]
+fn registry(add: bool) {
+    use std::process::Command;
+    let exe = std::env::current_exe()
+        .unwrap_or_else(|e| die(&format!("cannot locate this executable: {e}")));
+    let open = format!("\"{}\" gui \"%1\"", exe.display());
+    let menu = "Rename with Iron Renamer";
+    const KEYS: [&str; 4] = [
+        r"HKCU\Software\Classes\*\shell\IronRenamer",
+        r"HKCU\Software\Classes\Directory\shell\IronRenamer",
+        r"HKCU\Software\Classes\.preset",
+        r"HKCU\Software\Classes\IronRenamer.Preset",
+    ];
+    let sets: [(String, &str); 7] = [
+        (KEYS[0].into(), menu),
+        (format!(r"{}\command", KEYS[0]), &open),
+        (KEYS[1].into(), menu),
+        (format!(r"{}\command", KEYS[1]), &open),
+        (KEYS[2].into(), "IronRenamer.Preset"),
+        (KEYS[3].into(), "Iron Renamer preset"),
+        (format!(r"{}\shell\open\command", KEYS[3]), &open),
+    ];
+    if add {
+        for (key, value) in &sets {
+            let ok = Command::new("reg")
+                .args(["add", key, "/ve", "/d", value, "/f"])
+                .output()
+                .is_ok_and(|o| o.status.success());
+            if !ok {
+                die(&format!("could not write registry key {key}"));
+            }
+        }
+        println!("Explorer context menu and .preset association added for the current user");
+        println!("('iron_renamer unregister' removes them)");
+    } else {
+        for key in KEYS {
+            // Absent keys are fine — unregister is idempotent.
+            let _ = Command::new("reg").args(["delete", key, "/f"]).output();
+        }
+        println!("Explorer integration removed");
+    }
+}
+
+#[cfg(not(windows))]
+fn registry(_add: bool) {
+    die("Explorer integration is Windows-only");
 }
 
 fn die(msg: &str) -> ! {
