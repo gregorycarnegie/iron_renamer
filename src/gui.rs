@@ -1,13 +1,11 @@
 // Slint GUI front-end over the shared engine. Live preview on every change.
 
-use crate::batch::{self, BatchCfg, Collision, Mode, Op};
-use crate::engine::{Masks, RuleEntry, build_rule, collect_dir, name_of, natural_key, split_ext};
+use crate::{
+    batch::{self, BatchCfg, Collision, Mode, Op},
+    engine::{Masks, RuleEntry, build_rule, collect_dir, name_of, natural_key, split_ext},
+};
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
-use std::cell::RefCell;
-use std::collections::HashMap;
-use std::fs;
-use std::path::PathBuf;
-use std::rc::Rc;
+use std::{cell::RefCell, collections::HashMap, fs, path::PathBuf, rc::Rc};
 
 slint::include_modules!();
 
@@ -23,11 +21,21 @@ impl RuleSpec {
     fn build(&self) -> Result<RuleEntry, String> {
         let mods: Vec<&str> = self.mods.split(':').filter(|m| !m.is_empty()).collect();
         let (rule, part) = build_rule(&self.kind, &mods, &self.a, &self.b)?;
-        Ok(RuleEntry { rule, part, cond: None })
+        Ok(RuleEntry {
+            rule,
+            part,
+            cond: None,
+        })
     }
 
     fn summary(&self) -> String {
-        let b = |default: &str| if self.b.is_empty() { default.to_string() } else { self.b.clone() };
+        let b = |default: &str| {
+            if self.b.is_empty() {
+                default.to_string()
+            } else {
+                self.b.clone()
+            }
+        };
         let mut s = match self.kind.as_str() {
             "replace" => format!("\"{}\" → \"{}\"", self.a, self.b),
             "regex" => format!("/{}/ → \"{}\"", self.a, self.b),
@@ -52,7 +60,7 @@ struct State {
     files: Vec<PathBuf>,
     rules: Vec<RuleSpec>,
     overrides: HashMap<PathBuf, String>, // per-item manual new names
-    dirs: bool, // list holds folders, not files — never mixed
+    dirs: bool,                          // list holds folders, not files — never mixed
     can_undo: bool,
 }
 
@@ -208,7 +216,11 @@ pub fn run() -> Result<(), slint::PlatformError> {
             .set_file_name("filelist.txt")
             .save_file()
         {
-            let body: String = s.files.iter().map(|f| format!("{}\n", f.display())).collect();
+            let body: String = s
+                .files
+                .iter()
+                .map(|f| format!("{}\n", f.display()))
+                .collect();
             let msg = match fs::write(&p, body) {
                 Ok(_) => format!("saved {} item(s) to {}", s.files.len(), p.display()),
                 Err(e) => format!("save failed: {e}"),
@@ -219,7 +231,10 @@ pub fn run() -> Result<(), slint::PlatformError> {
     });
 
     on!(on_load_list, |ui, st| {
-        let Some(p) = rfd::FileDialog::new().add_filter("text", &["txt"]).pick_file() else {
+        let Some(p) = rfd::FileDialog::new()
+            .add_filter("text", &["txt"])
+            .pick_file()
+        else {
             return;
         };
         let body = match fs::read_to_string(&p) {
@@ -229,13 +244,19 @@ pub fn run() -> Result<(), slint::PlatformError> {
                 return;
             }
         };
-        let paths: Vec<PathBuf> =
-            body.lines().map(str::trim).filter(|l| !l.is_empty()).map(PathBuf::from).collect();
+        let paths: Vec<PathBuf> = body
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .map(PathBuf::from)
+            .collect();
         let total = paths.len();
         // A list is folders only if every line is one; otherwise keep the files.
         let dirs_mode = !paths.is_empty() && paths.iter().all(|p| p.is_dir());
-        let keep: Vec<PathBuf> =
-            paths.into_iter().filter(|p| if dirs_mode { p.is_dir() } else { p.is_file() }).collect();
+        let keep: Vec<PathBuf> = paths
+            .into_iter()
+            .filter(|p| if dirs_mode { p.is_dir() } else { p.is_file() })
+            .collect();
         let skipped = total - keep.len();
         let mut s = st.borrow_mut();
         s.files = keep;
@@ -256,7 +277,10 @@ pub fn run() -> Result<(), slint::PlatformError> {
 
     // CSV import: column 1 = existing file path, column 2 = manual new name.
     on!(on_import_csv, |ui, st| {
-        let Some(p) = rfd::FileDialog::new().add_filter("csv", &["csv"]).pick_file() else {
+        let Some(p) = rfd::FileDialog::new()
+            .add_filter("csv", &["csv"])
+            .pick_file()
+        else {
             return;
         };
         let body = match fs::read_to_string(&p) {
@@ -343,7 +367,10 @@ pub fn run() -> Result<(), slint::PlatformError> {
                 ("mode".to_string(), ui.get_batch_mode().to_string()),
                 ("dest".to_string(), ui.get_dest_text().to_string()),
                 ("collide".to_string(), ui.get_collide().to_string()),
-                ("collide_pattern".to_string(), ui.get_collide_pattern().to_string()),
+                (
+                    "collide_pattern".to_string(),
+                    ui.get_collide_pattern().to_string(),
+                ),
             ]
             .into(),
             rules: s
@@ -363,8 +390,10 @@ pub fn run() -> Result<(), slint::PlatformError> {
     on!(on_load_preset, |ui, st| {
         let dir = crate::presets::dir();
         let _ = fs::create_dir_all(&dir);
-        let Some(p) =
-            rfd::FileDialog::new().add_filter("preset", &["preset"]).set_directory(&dir).pick_file()
+        let Some(p) = rfd::FileDialog::new()
+            .add_filter("preset", &["preset"])
+            .set_directory(&dir)
+            .pick_file()
         else {
             return;
         };
@@ -455,9 +484,15 @@ pub fn run() -> Result<(), slint::PlatformError> {
         let mut s = st.borrow_mut();
         match kind.as_str() {
             "name" => s.files.sort_by_key(|f| natural_key(&name_of(f))),
-            "ext" => s.files.sort_by_key(|f| split_ext(&name_of(f)).1.to_lowercase()),
-            "size" => s.files.sort_by_key(|f| fs::metadata(f).map(|m| m.len()).unwrap_or(0)),
-            "date" => s.files.sort_by_key(|f| fs::metadata(f).and_then(|m| m.modified()).ok()),
+            "ext" => s
+                .files
+                .sort_by_key(|f| split_ext(&name_of(f)).1.to_lowercase()),
+            "size" => s
+                .files
+                .sort_by_key(|f| fs::metadata(f).map(|m| m.len()).unwrap_or(0)),
+            "date" => s
+                .files
+                .sort_by_key(|f| fs::metadata(f).and_then(|m| m.modified()).ok()),
             _ => return, // manual order
         }
         if ui.get_sort_desc() {
@@ -505,7 +540,12 @@ pub fn run() -> Result<(), slint::PlatformError> {
             }
             _ => {}
         }
-        let spec = RuleSpec { kind, a, b, mods: mods.join(":") };
+        let spec = RuleSpec {
+            kind,
+            a,
+            b,
+            mods: mods.join(":"),
+        };
         match spec.build() {
             Ok(_) => {
                 st.borrow_mut().rules.push(spec);
@@ -560,14 +600,18 @@ pub fn run() -> Result<(), slint::PlatformError> {
             return;
         }
         let s = st.borrow();
-        let Some(f) = s.files.get(i as usize) else { return };
+        let Some(f) = s.files.get(i as usize) else {
+            return;
+        };
         let msg = match fs::metadata(f) {
             Ok(md) => format!(
                 "{} · {} bytes · created {} · modified {}",
                 f.display(),
                 md.len(),
                 md.created().map(crate::tags::dt_string).unwrap_or_default(),
-                md.modified().map(crate::tags::dt_string).unwrap_or_default()
+                md.modified()
+                    .map(crate::tags::dt_string)
+                    .unwrap_or_default()
             ),
             Err(_) => f.display().to_string(),
         };
@@ -658,7 +702,10 @@ pub fn run() -> Result<(), slint::PlatformError> {
                 drop(s);
                 match errors.len() {
                     0 => format!("reverted {} item(s)", reverted.len()),
-                    n => format!("reverted {} item(s), {n} failed — undo again to retry", reverted.len()),
+                    n => format!(
+                        "reverted {} item(s), {n} failed — undo again to retry",
+                        reverted.len()
+                    ),
                 }
             }
             Err(e) => e,
@@ -692,7 +739,11 @@ fn compute(ui: &MainWindow, s: &State) -> Computed {
         "move" => Mode::Move,
         _ => Mode::Rename,
     };
-    let dest = if mode == Mode::Rename { String::new() } else { ui.get_dest_text().to_string() };
+    let dest = if mode == Mode::Rename {
+        String::new()
+    } else {
+        ui.get_dest_text().to_string()
+    };
     let collision = match ui.get_collide().as_str() {
         "number" => Collision::Number,
         "letter" => Collision::Letter,
@@ -743,13 +794,29 @@ fn compute(ui: &MainWindow, s: &State) -> Computed {
         rows.push(FileRow {
             index: i as i32,
             old_name: name_of(&item.from).into(),
-            new_name: if state == 0 { SharedString::new() } else { shown.into() },
-            dir: item.from.parent().map(|p| p.display().to_string()).unwrap_or_default().into(),
+            new_name: if state == 0 {
+                SharedString::new()
+            } else {
+                shown.into()
+            },
+            dir: item
+                .from
+                .parent()
+                .map(|p| p.display().to_string())
+                .unwrap_or_default()
+                .into(),
             status: status.into(),
             state,
         });
     }
-    Computed { rows, items, plan, mode, changed, errors }
+    Computed {
+        rows,
+        items,
+        plan,
+        mode,
+        changed,
+        errors,
+    }
 }
 
 fn refresh(ui: &MainWindow, s: &State) {
@@ -774,10 +841,19 @@ fn refresh(ui: &MainWindow, s: &State) {
     let rules: Vec<RuleRow> = s
         .rules
         .iter()
-        .map(|r| RuleRow { kind: r.kind.to_uppercase().into(), summary: r.summary().into() })
+        .map(|r| RuleRow {
+            kind: r.kind.to_uppercase().into(),
+            summary: r.summary().into(),
+        })
         .collect();
     ui.set_rules(ModelRc::new(VecModel::from(rules)));
     ui.set_status_text(
-        format!("{} file(s) · {} rule(s) · {} change(s)", s.files.len(), s.rules.len(), c.changed).into(),
+        format!(
+            "{} file(s) · {} rule(s) · {} change(s)",
+            s.files.len(),
+            s.rules.len(),
+            c.changed
+        )
+        .into(),
     );
 }

@@ -2,11 +2,15 @@
 // preview -> apply -> undo flow, awkward names through the rule engine,
 // and forced mid-batch failures in every mode.
 
-use crate::batch::{self, BatchCfg, Collision, Mode};
-use crate::engine::{Ctx, RuleEntry, apply_entry, build_rule};
-use std::collections::HashMap;
-use std::fs;
-use std::path::{Path, PathBuf};
+use crate::{
+    batch::{self, BatchCfg, Collision, Mode},
+    engine::{Ctx, RuleEntry, apply_entry, build_rule},
+};
+use std::{
+    collections::HashMap,
+    fs,
+    path::{Path, PathBuf},
+};
 
 fn tmpdir(name: &str) -> PathBuf {
     let d = std::env::temp_dir().join(format!("iron_renamer_e2e_{name}_{}", std::process::id()));
@@ -30,7 +34,11 @@ fn rules(specs: &[(&str, &[&str], &str, &str)]) -> Vec<RuleEntry> {
         .iter()
         .map(|(kind, mods, a, b)| {
             let (rule, part) = build_rule(kind, mods, a, b).unwrap();
-            RuleEntry { rule, part, cond: None }
+            RuleEntry {
+                rule,
+                part,
+                cond: None,
+            }
         })
         .collect()
 }
@@ -68,7 +76,10 @@ fn full_flow_preview_chain_collision_undo() {
     let items2 = batch::plan(&files, &cfg);
     assert_eq!(items2[2].issue.as_deref(), Some("target exists"));
     // ...and the Number policy resolves it in the preview.
-    let cfg_num = BatchCfg { collision: Collision::Number, ..cfg };
+    let cfg_num = BatchCfg {
+        collision: Collision::Number,
+        ..cfg
+    };
     let items3 = batch::plan(&files, &cfg_num);
     assert_eq!(items3[2].new_name, "img4 (2).jpg");
     assert!(items3.iter().all(|i| i.issue.is_none()));
@@ -76,7 +87,11 @@ fn full_flow_preview_chain_collision_undo() {
 
     // Apply: the executor orders the chain (img3 must move before img2...).
     let items = batch::plan(&files, &cfg);
-    let ops = items.iter().filter(|i| i.changed && i.issue.is_none()).map(|i| i.op()).collect();
+    let ops = items
+        .iter()
+        .filter(|i| i.changed && i.issue.is_none())
+        .map(|i| i.op())
+        .collect();
     let res = batch::execute(ops, Mode::Rename);
     assert_eq!((res.renamed.len(), res.failed.len()), (3, 0));
     assert_eq!(read(&d.join("img2.jpg")), "one");
@@ -103,27 +118,80 @@ fn rules_on_awkward_names() {
         ("replace", &[], "é", "e", "café.txt", "cafe.txt"),
         ("replace", &["ci"], "CAFÉ", "x", "café.txt", "x.txt"),
         ("case", &[], "upper", "", "grüße.txt", "GRÜSSE.TXT"),
-        ("case", &["name"], "title", "", "мой файл.txt", "Мой Файл.txt"),
+        (
+            "case",
+            &["name"],
+            "title",
+            "",
+            "мой файл.txt",
+            "Мой Файл.txt",
+        ),
         ("case", &[], "invert", "", "aBc🎉.TXT", "AbC🎉.txt"),
         // dotfiles are all stem, no extension
         ("pattern", &[], "<name>_x", "", ".gitignore", ".gitignore_x"),
         ("case", &["ext"], "upper", "", ".gitignore", ".gitignore"),
         // only the last extension is the extension
-        ("insert", &["name"], "_v2", "end", "archive.tar.gz", "archive.tar_v2.gz"),
-        ("case", &["ext"], "upper", "", "archive.tar.gz", "archive.tar.GZ"),
+        (
+            "insert",
+            &["name"],
+            "_v2",
+            "end",
+            "archive.tar.gz",
+            "archive.tar_v2.gz",
+        ),
+        (
+            "case",
+            &["ext"],
+            "upper",
+            "",
+            "archive.tar.gz",
+            "archive.tar.GZ",
+        ),
         // extensionless: ext rules build one, name rules take the whole name
         ("insert", &["ext"], "bak", "end", "README", "README.bak"),
         ("case", &["name"], "lower", "", "README", "readme"),
-        ("remove", &[], "diacritics", "", "žluťoučký.txt", "zlutoucky.txt"),
+        (
+            "remove",
+            &[],
+            "diacritics",
+            "",
+            "žluťoučký.txt",
+            "zlutoucky.txt",
+        ),
         ("trim", &["name"], "", "", " spaced .txt", "spaced.txt"),
-        ("insert", &["name"], "✨", "start", "🎉party.txt", "✨🎉party.txt"),
-        ("remove", &["name"], "pos:0,1", "", "🎉party.txt", "party.txt"),
+        (
+            "insert",
+            &["name"],
+            "✨",
+            "start",
+            "🎉party.txt",
+            "✨🎉party.txt",
+        ),
+        (
+            "remove",
+            &["name"],
+            "pos:0,1",
+            "",
+            "🎉party.txt",
+            "party.txt",
+        ),
     ];
     for (kind, mods, a, b, input, expected) in cases {
         let (rule, part) = build_rule(kind, mods, a, b).unwrap();
-        let e = RuleEntry { rule, part, cond: None };
+        let e = RuleEntry {
+            rule,
+            part,
+            cond: None,
+        };
         let path = PathBuf::from(input);
-        let ctx = Ctx { index: 0, num: 1, pad: 1, folder_num: 1, path: &path, original: input };
+        let ctx = Ctx {
+            index: 0,
+            num: 1,
+            pad: 1,
+            folder_num: 1,
+            path: &path,
+            original: input,
+        };
         assert_eq!(
             apply_entry(&e, input, &ctx),
             *expected,
@@ -142,7 +210,10 @@ fn case_insensitive_duplicate_detection() {
     let files = vec![d.join("x.txt"), d.join("y.txt")];
     let none = HashMap::new();
     // x -> same.txt, y -> SAME.txt: same file on a case-insensitive volume.
-    let two = rules(&[("replace", &[], "x.txt", "same.txt"), ("replace", &[], "y.txt", "SAME.txt")]);
+    let two = rules(&[
+        ("replace", &[], "x.txt", "same.txt"),
+        ("replace", &[], "y.txt", "SAME.txt"),
+    ]);
     let cfg = BatchCfg {
         rules: &two,
         start: 1,
@@ -162,7 +233,11 @@ fn case_insensitive_duplicate_detection() {
 /// file stays untouched and the same op succeeds on retry.
 #[test]
 fn mid_batch_failure_recovery_all_modes() {
-    for (label, mode) in [("rename", Mode::Rename), ("copy", Mode::Copy), ("move", Mode::Move)] {
+    for (label, mode) in [
+        ("rename", Mode::Rename),
+        ("copy", Mode::Copy),
+        ("move", Mode::Move),
+    ] {
         let d = tmpdir(&format!("recover_{label}"));
         let a = put(&d, "a.txt", "A");
         let b = put(&d, "b.txt", "B");
@@ -172,12 +247,22 @@ fn mid_batch_failure_recovery_all_modes() {
         put(&out, "a.txt", "blocker");
 
         let ops = vec![
-            batch::Op { from: a.clone(), to: blocked.clone() },
-            batch::Op { from: b.clone(), to: out.join("b.txt") },
+            batch::Op {
+                from: a.clone(),
+                to: blocked.clone(),
+            },
+            batch::Op {
+                from: b.clone(),
+                to: out.join("b.txt"),
+            },
         ];
         let res = batch::execute(ops, mode);
         assert_eq!((res.renamed.len(), res.failed.len()), (1, 1), "{label}");
-        assert_eq!(read(&a), "A", "{label}: failed op leaves its file untouched");
+        assert_eq!(
+            read(&a),
+            "A",
+            "{label}: failed op leaves its file untouched"
+        );
         assert_eq!(read(&blocked), "blocker", "{label}: never overwrites");
         assert_eq!(read(&out.join("b.txt")), "B", "{label}");
         if mode == Mode::Copy {
@@ -190,7 +275,11 @@ fn mid_batch_failure_recovery_all_modes() {
         fs::remove_file(&blocked).unwrap();
         let retry: Vec<batch::Op> = res.failed.into_iter().map(|(op, _)| op).collect();
         let res2 = batch::execute(retry, mode);
-        assert_eq!((res2.renamed.len(), res2.failed.len()), (1, 0), "{label} retry");
+        assert_eq!(
+            (res2.renamed.len(), res2.failed.len()),
+            (1, 0),
+            "{label} retry"
+        );
         assert_eq!(read(&blocked), "A", "{label} retry lands");
     }
 }

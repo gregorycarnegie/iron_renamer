@@ -2,12 +2,12 @@
 // in a dated history for selective undo. Planning, validation, execution,
 // and history live in batch.rs, shared with the GUI.
 
-use crate::batch::{self, Op};
-use crate::engine::*;
-use crate::presets;
-use std::fs;
-use std::path::PathBuf;
-use std::process::exit;
+use crate::{
+    batch::{self, Op},
+    engine::*,
+    presets,
+};
+use std::{fs, path::PathBuf, process::exit};
 
 const USAGE: &str = "\
 iron_renamer — batch file renamer (run with no arguments for the GUI)
@@ -134,7 +134,11 @@ pub fn run(args: Vec<String>) {
         let (flag, mod_str) = a.split_once(':').unwrap_or((a.as_str(), ""));
         let mods: Vec<&str> = mod_str.split(':').filter(|m| !m.is_empty()).collect();
         let mut rule = |kind: &str, a: &str, b: &str| match build_rule(kind, &mods, a, b) {
-            Ok((rule, part)) => rules.push(RuleEntry { rule, part, cond: None }),
+            Ok((rule, part)) => rules.push(RuleEntry {
+                rule,
+                part,
+                cond: None,
+            }),
             Err(e) => die(&e),
         };
         match flag {
@@ -204,7 +208,11 @@ pub fn run(args: Vec<String>) {
                 for (kind, mod_str, a, b) in &preset.rules {
                     let m: Vec<&str> = mod_str.split(':').filter(|x| !x.is_empty()).collect();
                     match build_rule(kind, &m, a, b) {
-                        Ok((rule, part)) => rules.push(RuleEntry { rule, part, cond: None }),
+                        Ok((rule, part)) => rules.push(RuleEntry {
+                            rule,
+                            part,
+                            cond: None,
+                        }),
                         Err(e) => die(&format!("preset rule: {e}")),
                     }
                 }
@@ -228,7 +236,11 @@ pub fn run(args: Vec<String>) {
                     "letter" => batch::Collision::Letter,
                     "pattern" => {
                         let p = get("collide_pattern");
-                        batch::Collision::Pattern(if p.is_empty() { "_<num>".into() } else { p.into() })
+                        batch::Collision::Pattern(if p.is_empty() {
+                            "_<num>".into()
+                        } else {
+                            p.into()
+                        })
                     }
                     _ => collision,
                 };
@@ -295,7 +307,9 @@ pub fn run(args: Vec<String>) {
             }
             "--start" => {
                 let v = need(1, &mut it);
-                start = v[0].parse().unwrap_or_else(|_| die("--start needs a number"));
+                start = v[0]
+                    .parse()
+                    .unwrap_or_else(|_| die("--start needs a number"));
             }
             "--pad" => {
                 let v = need(1, &mut it);
@@ -309,16 +323,26 @@ pub fn run(args: Vec<String>) {
         die("no rules given (see --help)");
     }
     if files.is_empty() {
-        die(if dirs { "no folders matched" } else { "no files matched" });
+        die(if dirs {
+            "no folders matched"
+        } else {
+            "no files matched"
+        });
     }
 
     // One batch never mixes files and folders.
     for f in &files {
         if dirs && !f.is_dir() {
-            die(&format!("'{}' is not a folder (drop --dirs to rename files)", f.display()));
+            die(&format!(
+                "'{}' is not a folder (drop --dirs to rename files)",
+                f.display()
+            ));
         }
         if !dirs && f.is_dir() {
-            die(&format!("'{}' is a folder (use --dirs to rename folders)", f.display()));
+            die(&format!(
+                "'{}' is a folder (use --dirs to rename folders)",
+                f.display()
+            ));
         }
         if !dirs && !f.is_file() {
             die(&format!("'{}' not found", f.display()));
@@ -327,7 +351,13 @@ pub fn run(args: Vec<String>) {
 
     // Natural name sort by default so photo_9 numbers before photo_10;
     // a --list keeps its own order unless a sort is asked for.
-    let sort = sort.unwrap_or_else(|| if from_list { "none".into() } else { "name".into() });
+    let sort = sort.unwrap_or_else(|| {
+        if from_list {
+            "none".into()
+        } else {
+            "name".into()
+        }
+    });
     match sort.as_str() {
         "name" => files.sort_by_key(|f| natural_key(&name_of(f))),
         "ext" => files.sort_by_key(|f| split_ext(&name_of(f)).1.to_lowercase()),
@@ -398,7 +428,10 @@ pub fn run(args: Vec<String>) {
     }
 
     if !apply {
-        println!("\npreview only — re-run with --apply to {verb} {} item(s)", ops.len());
+        println!(
+            "\npreview only — re-run with --apply to {verb} {} item(s)",
+            ops.len()
+        );
         if touch.is_some() {
             println!("timestamps will be set on {} item(s)", files.len());
         }
@@ -449,7 +482,10 @@ pub fn run(args: Vec<String>) {
         println!("\n{done} {} of {planned} item(s)", res.renamed.len());
     }
     if !res.failed.is_empty() {
-        eprintln!("{} failed — re-run the same command to retry them", res.failed.len());
+        eprintln!(
+            "{} failed — re-run the same command to retry them",
+            res.failed.len()
+        );
         exit(1);
     }
     if planned > 0 && mode != batch::Mode::Copy {
@@ -459,7 +495,8 @@ pub fn run(args: Vec<String>) {
 
 fn undo(id_arg: Option<&String>) {
     let id = id_arg.map(|s| {
-        s.parse().unwrap_or_else(|_| die("undo ID must be a number (see 'iron_renamer history')"))
+        s.parse()
+            .unwrap_or_else(|_| die("undo ID must be a number (see 'iron_renamer history')"))
     });
     match batch::undo(id) {
         Ok((reverted, errors)) => {

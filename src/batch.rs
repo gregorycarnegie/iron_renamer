@@ -6,13 +6,17 @@
 // moves. Every applied rename/move batch is recorded in a dated history
 // file for selective undo (copies are not undoable and are not recorded).
 
-use crate::engine::{Ctx, RuleEntry, apply_entry, name_of, split_ext};
-use crate::tags;
-use std::collections::{HashMap, HashSet};
-use std::fs;
-use std::io::{self, Write};
-use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use crate::{
+    engine::{Ctx, RuleEntry, apply_entry, name_of, split_ext},
+    tags,
+};
+use std::{
+    collections::{HashMap, HashSet},
+    fs,
+    io::{self, Write},
+    path::{Path, PathBuf},
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Op {
@@ -81,7 +85,10 @@ pub struct PlanItem {
 
 impl PlanItem {
     pub fn op(&self) -> Op {
-        Op { from: self.from.clone(), to: self.target.clone() }
+        Op {
+            from: self.from.clone(),
+            to: self.target.clone(),
+        }
     }
 }
 
@@ -100,10 +107,9 @@ pub fn name_issue(name: &str) -> Option<String> {
     if name.is_empty() {
         return Some("empty name".into());
     }
-    if let Some(c) = name
-        .chars()
-        .find(|c| matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*') || (*c as u32) < 0x20)
-    {
+    if let Some(c) = name.chars().find(|c| {
+        matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*') || (*c as u32) < 0x20
+    }) {
         return Some(format!("invalid character '{}'", c.escape_default()));
     }
     if name.ends_with('.') || name.ends_with(' ') {
@@ -118,7 +124,10 @@ pub fn name_issue(name: &str) -> Option<String> {
 // ───────────────────────── planning
 
 fn lower_abs(p: &Path) -> String {
-    std::path::absolute(p).unwrap_or_else(|_| p.to_path_buf()).to_string_lossy().to_lowercase()
+    std::path::absolute(p)
+        .unwrap_or_else(|_| p.to_path_buf())
+        .to_string_lossy()
+        .to_lowercase()
 }
 
 /// Apply rules (or a manual override) to every file, resolve the destination,
@@ -140,8 +149,14 @@ pub fn plan(files: &[PathBuf], cfg: &BatchCfg) -> Vec<PlanItem> {
     let mut ctxs: Vec<(usize, usize)> = Vec::with_capacity(files.len()); // (num, folder_num)
     for (i, f) in files.iter().enumerate() {
         let original = name_of(f);
-        let folder = f.parent().map(|p| p.to_string_lossy().to_lowercase()).unwrap_or_default();
-        let folder_num = *per_folder.entry(folder.clone()).and_modify(|n| *n += 1).or_insert(1);
+        let folder = f
+            .parent()
+            .map(|p| p.to_string_lossy().to_lowercase())
+            .unwrap_or_default();
+        let folder_num = *per_folder
+            .entry(folder.clone())
+            .and_modify(|n| *n += 1)
+            .or_insert(1);
         let ctx = Ctx {
             index: i,
             num: cfg.start + i,
@@ -191,7 +206,11 @@ pub fn plan(files: &[PathBuf], cfg: &BatchCfg) -> Vec<PlanItem> {
             }
         };
         let changed = dest_dir.join(&name) != *f;
-        pre.push(Pre { name, dest_dir, changed });
+        pre.push(Pre {
+            name,
+            dest_dir,
+            changed,
+        });
     }
 
     // A target on disk is only a conflict if a batch item vacates that path.
@@ -228,14 +247,19 @@ pub fn plan(files: &[PathBuf], cfg: &BatchCfg) -> Vec<PlanItem> {
                 let is_self = key == self_lower;
                 // In copy mode "the same file, different case" is still a
                 // collision; for rename it is a valid case-only rename.
-                let disk = target.exists() && !vacates(&target) && (!is_self || cfg.mode == Mode::Copy);
+                let disk =
+                    target.exists() && !vacates(&target) && (!is_self || cfg.mode == Mode::Copy);
                 let dup = taken.contains(&key);
                 if !disk && !dup {
                     break;
                 }
                 let suffix = match &cfg.collision {
                     Collision::Fail => {
-                        issue = Some(if dup { "duplicate target".into() } else { "target exists".into() });
+                        issue = Some(if dup {
+                            "duplicate target".into()
+                        } else {
+                            "target exists".into()
+                        });
                         break;
                     }
                     Collision::Number => {
@@ -268,13 +292,22 @@ pub fn plan(files: &[PathBuf], cfg: &BatchCfg) -> Vec<PlanItem> {
                 target = p.dest_dir.join(&name);
             }
             if issue.is_none()
-                && std::path::absolute(&target).map(|t| t.as_os_str().len()).unwrap_or(0) > 259
+                && std::path::absolute(&target)
+                    .map(|t| t.as_os_str().len())
+                    .unwrap_or(0)
+                    > 259
             {
                 issue = Some("path too long".into());
             }
         }
         taken.insert(lower_abs(&target));
-        items.push(PlanItem { from: f.clone(), new_name: name, target, changed: p.changed, issue });
+        items.push(PlanItem {
+            from: f.clone(),
+            new_name: name,
+            target,
+            changed: p.changed,
+            issue,
+        });
     }
     items
 }
@@ -330,7 +363,10 @@ pub fn execute(ops: Vec<Op>, mode: Mode) -> ExecResult {
     if mode == Mode::Copy {
         for op in ops {
             let res = if op.to.exists() {
-                Err(io::Error::new(io::ErrorKind::AlreadyExists, "target exists"))
+                Err(io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    "target exists",
+                ))
             } else {
                 transfer(&op.from, &op.to, mode)
             };
@@ -348,31 +384,52 @@ pub fn execute(ops: Vec<Op>, mode: Mode) -> ExecResult {
         to: PathBuf,
     }
     let low = |p: &Path| p.to_string_lossy().to_lowercase();
-    let mut pending: Vec<P> =
-        ops.into_iter().map(|o| P { orig: o.from.clone(), cur: o.from, to: o.to }).collect();
+    let mut pending: Vec<P> = ops
+        .into_iter()
+        .map(|o| P {
+            orig: o.from.clone(),
+            cur: o.from,
+            to: o.to,
+        })
+        .collect();
     let mut tmp_n = 0u32;
 
     while !pending.is_empty() {
         let unblocked = (0..pending.len()).find(|&i| {
-            !pending.iter().enumerate().any(|(j, q)| j != i && low(&q.cur) == low(&pending[i].to))
+            !pending
+                .iter()
+                .enumerate()
+                .any(|(j, q)| j != i && low(&q.cur) == low(&pending[i].to))
         });
         if let Some(i) = unblocked {
             let p = pending.remove(i);
             let case_only = low(&p.cur) == low(&p.to);
             // fs::rename overwrites on Unix; refuse instead of clobbering.
             let res = if !case_only && p.to.exists() {
-                Err(io::Error::new(io::ErrorKind::AlreadyExists, "target exists"))
+                Err(io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    "target exists",
+                ))
             } else {
                 transfer(&p.cur, &p.to, mode)
             };
             match res {
-                Ok(_) => renamed.push(Op { from: p.orig, to: p.to }),
+                Ok(_) => renamed.push(Op {
+                    from: p.orig,
+                    to: p.to,
+                }),
                 Err(e) => {
                     let mut msg = e.to_string();
                     if p.cur != p.orig && fs::rename(&p.cur, &p.orig).is_err() {
                         msg = format!("{msg} (file left at temporary name '{}')", p.cur.display());
                     }
-                    failed.push((Op { from: p.orig, to: p.to }, msg));
+                    failed.push((
+                        Op {
+                            from: p.orig,
+                            to: p.to,
+                        },
+                        msg,
+                    ));
                 }
             }
         } else {
@@ -380,7 +437,9 @@ pub fn execute(ops: Vec<Op>, mode: Mode) -> ExecResult {
             let mut tmp;
             loop {
                 tmp_n += 1;
-                tmp = pending[0].to.with_file_name(format!(".irtmp_{}_{tmp_n}", std::process::id()));
+                tmp = pending[0]
+                    .to
+                    .with_file_name(format!(".irtmp_{}_{tmp_n}", std::process::id()));
                 if !tmp.exists() {
                     break;
                 }
@@ -389,7 +448,13 @@ pub fn execute(ops: Vec<Op>, mode: Mode) -> ExecResult {
                 Ok(_) => pending[0].cur = tmp,
                 Err(e) => {
                     let p = pending.remove(0);
-                    failed.push((Op { from: p.orig, to: p.to }, e.to_string()));
+                    failed.push((
+                        Op {
+                            from: p.orig,
+                            to: p.to,
+                        },
+                        e.to_string(),
+                    ));
                 }
             }
         }
@@ -419,14 +484,23 @@ pub struct TouchSpec {
 /// ("+3d", "-2h"), or name | parent | exif.
 pub fn parse_touch(s: &str) -> Result<TouchSpec, String> {
     let (which, value) = s.split_once('=').ok_or("timestamp spec is WHICH=VALUE")?;
-    let mut spec = TouchSpec { created: false, modified: false, accessed: false, value: TouchValue::Delta(0) };
+    let mut spec = TouchSpec {
+        created: false,
+        modified: false,
+        accessed: false,
+        value: TouchValue::Delta(0),
+    };
     for w in which.split(',').map(str::trim) {
         match w {
             "created" => spec.created = true,
             "modified" => spec.modified = true,
             "accessed" => spec.accessed = true,
             "all" => (spec.created, spec.modified, spec.accessed) = (true, true, true),
-            other => return Err(format!("unknown timestamp field '{other}' (created|modified|accessed|all)")),
+            other => {
+                return Err(format!(
+                    "unknown timestamp field '{other}' (created|modified|accessed|all)"
+                ));
+            }
         }
     }
     let value = value.trim();
@@ -434,9 +508,9 @@ pub fn parse_touch(s: &str) -> Result<TouchSpec, String> {
         "name" => TouchValue::FromName,
         "parent" => TouchValue::FromParent,
         "exif" => TouchValue::FromExif,
-        v if v.starts_with('+') || v.starts_with('-') => TouchValue::Delta(
-            tags::parse_offset(v).ok_or_else(|| format!("bad time delta '{v}'"))?,
-        ),
+        v if v.starts_with('+') || v.starts_with('-') => {
+            TouchValue::Delta(tags::parse_offset(v).ok_or_else(|| format!("bad time delta '{v}'"))?)
+        }
         v => TouchValue::Absolute(
             tags::extract_datetime(v).ok_or_else(|| format!("no date found in '{v}'"))?,
         ),
@@ -469,7 +543,9 @@ pub fn apply_touch(paths: &[PathBuf], spec: &TouchSpec) -> (usize, Vec<String>) 
 
 fn touch_one(p: &Path, spec: &TouchSpec) -> Result<bool, String> {
     let secs_of = |t: SystemTime| {
-        t.duration_since(UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
+        t.duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0)
     };
     let fixed: Option<SystemTime> = match &spec.value {
         TouchValue::Absolute(s) => Some(system_time(*s)),
@@ -478,7 +554,11 @@ fn touch_one(p: &Path, spec: &TouchSpec) -> Result<bool, String> {
         TouchValue::FromParent => {
             let parent = std::path::absolute(p)
                 .ok()
-                .and_then(|q| q.parent().and_then(|d| d.file_name()).map(|n| n.to_string_lossy().into_owned()))
+                .and_then(|q| {
+                    q.parent()
+                        .and_then(|d| d.file_name())
+                        .map(|n| n.to_string_lossy().into_owned())
+                })
                 .unwrap_or_default();
             tags::extract_datetime(&parent).map(system_time)
         }
@@ -518,7 +598,10 @@ fn touch_one(p: &Path, spec: &TouchSpec) -> Result<bool, String> {
         use std::os::windows::fs::FileTimesExt;
         times = times.set_created(field(md.created())?);
     }
-    let f = fs::File::options().write(true).open(p).map_err(|e| e.to_string())?;
+    let f = fs::File::options()
+        .write(true)
+        .open(p)
+        .map_err(|e| e.to_string())?;
     f.set_times(times).map_err(|e| e.to_string())?;
     Ok(true)
 }
@@ -529,7 +612,11 @@ fn touch_one(p: &Path, spec: &TouchSpec) -> Result<bool, String> {
 /// .csv, .json, or plain text ("old -> target") for anything else.
 pub fn export_preview(items: &[PlanItem], path: &Path) -> io::Result<()> {
     use crate::presets::{csv_field, json_str};
-    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
     let status = |it: &PlanItem| match (&it.issue, it.changed) {
         (Some(e), _) => e.clone(),
         (None, true) => "ok".to_string(),
@@ -583,12 +670,20 @@ pub fn export_preview(items: &[PlanItem], path: &Path) -> io::Result<()> {
 /// Write an execution result log to `path` (.csv, .json, or text).
 pub fn export_results(res: &ExecResult, path: &Path) -> io::Result<()> {
     use crate::presets::{csv_field, json_str};
-    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
     let rows: Vec<(&Op, String)> = res
         .renamed
         .iter()
         .map(|op| (op, "done".to_string()))
-        .chain(res.failed.iter().map(|(op, e)| (op, format!("failed: {e}"))))
+        .chain(
+            res.failed
+                .iter()
+                .map(|(op, e)| (op, format!("failed: {e}"))),
+        )
         .collect();
     let body = match ext.as_str() {
         "csv" => {
@@ -620,7 +715,11 @@ pub fn export_results(res: &ExecResult, path: &Path) -> io::Result<()> {
         _ => {
             let mut s = String::new();
             for (op, r) in &rows {
-                s.push_str(&format!("{}  ->  {}   [{r}]\n", op.from.display(), op.to.display()));
+                s.push_str(&format!(
+                    "{}  ->  {}   [{r}]\n",
+                    op.from.display(),
+                    op.to.display()
+                ));
             }
             s
         }
@@ -647,15 +746,26 @@ pub(crate) fn record_at(path: &Path, ops: &[Op]) -> io::Result<u64> {
     if ops.is_empty() {
         return Ok(0);
     }
-    let id = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64;
+    let id = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir)?;
     }
     let mut body = String::new();
     for op in ops {
-        body.push_str(&format!("{id}\t{}\t{}\n", op.from.display(), op.to.display()));
+        body.push_str(&format!(
+            "{id}\t{}\t{}\n",
+            op.from.display(),
+            op.to.display()
+        ));
     }
-    fs::OpenOptions::new().create(true).append(true).open(path)?.write_all(body.as_bytes())?;
+    fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)?
+        .write_all(body.as_bytes())?;
     Ok(id)
 }
 
@@ -703,13 +813,23 @@ pub(crate) fn undo_at(path: &Path, id: Option<u64>) -> Result<(Vec<Op>, Vec<Stri
     let id = id
         .or_else(|| all.iter().map(|(i, _)| *i).max())
         .ok_or("no batch history")?;
-    let batch: Vec<Op> = all.iter().filter(|(i, _)| *i == id).map(|(_, o)| o.clone()).collect();
+    let batch: Vec<Op> = all
+        .iter()
+        .filter(|(i, _)| *i == id)
+        .map(|(_, o)| o.clone())
+        .collect();
     if batch.is_empty() {
         return Err(format!("no batch with id {id} (see 'history')"));
     }
 
-    let inverse: Vec<Op> =
-        batch.iter().rev().map(|o| Op { from: o.to.clone(), to: o.from.clone() }).collect();
+    let inverse: Vec<Op> = batch
+        .iter()
+        .rev()
+        .map(|o| Op {
+            from: o.to.clone(),
+            to: o.from.clone(),
+        })
+        .collect();
     // Move handles everything undo needs: directory creation and volumes.
     let res = execute(inverse, Mode::Move);
 
@@ -720,10 +840,16 @@ pub(crate) fn undo_at(path: &Path, id: Option<u64>) -> Result<(Vec<Op>, Vec<Stri
         .filter(|(i, o)| *i != id || still_applied.contains(&&o.from))
         .map(|(i, o)| format!("{i}\t{}\t{}\n", o.from.display(), o.to.display()))
         .collect();
-    let write_res =
-        if keep.is_empty() { fs::remove_file(path).or(Ok(())) } else { fs::write(path, keep) };
+    let write_res = if keep.is_empty() {
+        fs::remove_file(path).or(Ok(()))
+    } else {
+        fs::write(path, keep)
+    };
     if let Err(e) = write_res {
-        return Err(format!("reverted {} but could not update history: {e}", res.renamed.len()));
+        return Err(format!(
+            "reverted {} but could not update history: {e}",
+            res.renamed.len()
+        ));
     }
 
     let errors = res
@@ -749,13 +875,18 @@ mod tests {
             .iter()
             .map(|(kind, a, b)| {
                 let (rule, part) = build_rule(kind, &[], a, b).unwrap();
-                RuleEntry { rule, part, cond: None }
+                RuleEntry {
+                    rule,
+                    part,
+                    cond: None,
+                }
             })
             .collect()
     }
 
     fn tmpdir(name: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("iron_renamer_test_{name}_{}", std::process::id()));
+        let d =
+            std::env::temp_dir().join(format!("iron_renamer_test_{name}_{}", std::process::id()));
         let _ = fs::remove_dir_all(&d);
         fs::create_dir_all(&d).unwrap();
         d
@@ -790,21 +921,43 @@ mod tests {
         let a = put(&d, "a.txt", "A");
         let b = put(&d, "b.txt", "B");
         let res = execute(
-            vec![Op { from: a.clone(), to: b.clone() }, Op { from: b.clone(), to: a.clone() }],
+            vec![
+                Op {
+                    from: a.clone(),
+                    to: b.clone(),
+                },
+                Op {
+                    from: b.clone(),
+                    to: a.clone(),
+                },
+            ],
             Mode::Rename,
         );
         assert_eq!(res.renamed.len(), 2);
         assert!(res.failed.is_empty());
         assert_eq!(read(&a), "B");
         assert_eq!(read(&b), "A");
-        assert_eq!(fs::read_dir(&d).unwrap().count(), 2, "no temp files left behind");
+        assert_eq!(
+            fs::read_dir(&d).unwrap().count(),
+            2,
+            "no temp files left behind"
+        );
 
         let d = tmpdir("chain");
         let one = put(&d, "1.txt", "one");
         let two = put(&d, "2.txt", "two");
         let three = d.join("3.txt");
         let res = execute(
-            vec![Op { from: one.clone(), to: two.clone() }, Op { from: two.clone(), to: three.clone() }],
+            vec![
+                Op {
+                    from: one.clone(),
+                    to: two.clone(),
+                },
+                Op {
+                    from: two.clone(),
+                    to: three.clone(),
+                },
+            ],
             Mode::Rename,
         );
         assert!(res.failed.is_empty());
@@ -821,8 +974,14 @@ mod tests {
         let blocker = put(&d, "taken.txt", "X");
         let res = execute(
             vec![
-                Op { from: a.clone(), to: d.join("taken.txt") },
-                Op { from: b.clone(), to: d.join("free.txt") },
+                Op {
+                    from: a.clone(),
+                    to: d.join("taken.txt"),
+                },
+                Op {
+                    from: b.clone(),
+                    to: d.join("free.txt"),
+                },
             ],
             Mode::Rename,
         );
@@ -840,18 +999,36 @@ mod tests {
         let sub = d.join("out").join("deep");
 
         // Copy into a subfolder that does not exist yet.
-        let res = execute(vec![Op { from: a.clone(), to: sub.join("a.txt") }], Mode::Copy);
+        let res = execute(
+            vec![Op {
+                from: a.clone(),
+                to: sub.join("a.txt"),
+            }],
+            Mode::Copy,
+        );
         assert!(res.failed.is_empty());
         assert_eq!(read(&a), "A", "copy keeps the source");
         assert_eq!(read(&sub.join("a.txt")), "A");
 
         // Copy refuses to overwrite.
-        let res = execute(vec![Op { from: a.clone(), to: sub.join("a.txt") }], Mode::Copy);
+        let res = execute(
+            vec![Op {
+                from: a.clone(),
+                to: sub.join("a.txt"),
+            }],
+            Mode::Copy,
+        );
         assert_eq!(res.failed.len(), 1);
 
         // Move creates directories and removes the source.
         let b = put(&d, "b.txt", "B");
-        let res = execute(vec![Op { from: b.clone(), to: sub.join("b.txt") }], Mode::Move);
+        let res = execute(
+            vec![Op {
+                from: b.clone(),
+                to: sub.join("b.txt"),
+            }],
+            Mode::Move,
+        );
         assert!(res.failed.is_empty());
         assert!(!b.exists());
         assert_eq!(read(&sub.join("b.txt")), "B");
@@ -868,7 +1045,10 @@ mod tests {
 
         let case_rule = rules(&[("replace", "img", "IMG")]);
         let items = plan(&files, &BatchCfg::rename(&case_rule, 1, 1, &none));
-        assert!(items.iter().all(|i| i.changed && i.issue.is_none()), "case-only renames are valid");
+        assert!(
+            items.iter().all(|i| i.changed && i.issue.is_none()),
+            "case-only renames are valid"
+        );
 
         let dup_rule = rules(&[("pattern", "same.jpg", "")]);
         let items = plan(&files, &BatchCfg::rename(&dup_rule, 1, 1, &none));
@@ -890,7 +1070,10 @@ mod tests {
 
         // A manual override wins over rules but is validated like any name.
         let over: HashMap<PathBuf, String> = [(files[0].clone(), "manual.jpg".to_string())].into();
-        let cfg = BatchCfg { overrides: &over, ..BatchCfg::rename(&case_rule, 1, 1, &none) };
+        let cfg = BatchCfg {
+            overrides: &over,
+            ..BatchCfg::rename(&case_rule, 1, 1, &none)
+        };
         let items = plan(&files, &cfg);
         assert_eq!(items[0].new_name, "manual.jpg");
         assert!(items[0].issue.is_none());
@@ -912,7 +1095,10 @@ mod tests {
         };
         let items = plan(&files, &cfg);
         assert_eq!(items[0].new_name, "same (2).jpg", "disk collision numbered");
-        assert_eq!(items[1].new_name, "same (3).jpg", "batch duplicate numbered");
+        assert_eq!(
+            items[1].new_name, "same (3).jpg",
+            "batch duplicate numbered"
+        );
         assert!(items.iter().all(|i| i.issue.is_none()));
 
         let cfg = BatchCfg {
@@ -952,7 +1138,10 @@ mod tests {
         assert_eq!(items[1].target, d.join("sorted").join("txt").join("b.txt"));
 
         // Copy onto itself (empty dest, no rules) is a no-op, not a conflict.
-        let cfg = BatchCfg { mode: Mode::Copy, ..BatchCfg::rename(&[], 1, 1, &none) };
+        let cfg = BatchCfg {
+            mode: Mode::Copy,
+            ..BatchCfg::rename(&[], 1, 1, &none)
+        };
         let items = plan(&files, &cfg);
         assert!(items.iter().all(|i| !i.changed));
     }
@@ -966,11 +1155,20 @@ mod tests {
         let files = vec![d.join("img1.jpg"), d.join("img1.xmp"), d.join("img2.jpg")];
         let none = HashMap::new();
         let pat = rules(&[("pattern", "pic_<num>.<ext>", "")]);
-        let cfg = BatchCfg { pairs: true, ..BatchCfg::rename(&pat, 1, 1, &none) };
+        let cfg = BatchCfg {
+            pairs: true,
+            ..BatchCfg::rename(&pat, 1, 1, &none)
+        };
         let items = plan(&files, &cfg);
         assert_eq!(items[0].new_name, "pic_1.jpg");
-        assert_eq!(items[1].new_name, "pic_1.xmp", "sidecar adopts the pair's stem");
-        assert_eq!(items[2].new_name, "pic_3.jpg", "counters still count every row");
+        assert_eq!(
+            items[1].new_name, "pic_1.xmp",
+            "sidecar adopts the pair's stem"
+        );
+        assert_eq!(
+            items[2].new_name, "pic_3.jpg",
+            "counters still count every row"
+        );
         assert!(items.iter().all(|i| i.issue.is_none()));
         // Without pairs the sidecar gets its own counter value.
         let items = plan(&files, &BatchCfg::rename(&pat, 1, 1, &none));
@@ -1012,7 +1210,10 @@ mod tests {
         // From the file name.
         let spec = parse_touch("modified=name").unwrap();
         apply_touch(&[f.clone()], &spec);
-        assert_eq!(secs_of(&f), crate::tags::epoch_from_civil(2024, 5, 1, 12, 30, 0));
+        assert_eq!(
+            secs_of(&f),
+            crate::tags::epoch_from_civil(2024, 5, 1, 12, 30, 0)
+        );
 
         // No date in the name: skipped, not an error.
         let plain = put(&d, "plain.txt", "x");
@@ -1031,7 +1232,16 @@ mod tests {
 
         // Batch: swap a and b, then undo it through history.
         let res = execute(
-            vec![Op { from: a.clone(), to: b.clone() }, Op { from: b.clone(), to: a.clone() }],
+            vec![
+                Op {
+                    from: a.clone(),
+                    to: b.clone(),
+                },
+                Op {
+                    from: b.clone(),
+                    to: a.clone(),
+                },
+            ],
             Mode::Rename,
         );
         assert!(res.failed.is_empty());
@@ -1043,10 +1253,19 @@ mod tests {
         assert!(errors.is_empty());
         assert_eq!(read(&a), "A");
         assert_eq!(read(&b), "B");
-        assert!(history_at(&hist).is_empty(), "fully undone batch is removed from history");
+        assert!(
+            history_at(&hist).is_empty(),
+            "fully undone batch is removed from history"
+        );
 
         // A move batch undoes back out of its subfolder.
-        let res = execute(vec![Op { from: a.clone(), to: d.join("sub").join("a.txt") }], Mode::Move);
+        let res = execute(
+            vec![Op {
+                from: a.clone(),
+                to: d.join("sub").join("a.txt"),
+            }],
+            Mode::Move,
+        );
         assert!(res.failed.is_empty());
         record_at(&hist, &res.renamed).unwrap();
         let (reverted, errors) = undo_at(&hist, None).unwrap();
@@ -1064,8 +1283,14 @@ mod tests {
         let renamed_b = d.join("b2.txt");
         let res = execute(
             vec![
-                Op { from: a.clone(), to: renamed_a.clone() },
-                Op { from: b.clone(), to: renamed_b.clone() },
+                Op {
+                    from: a.clone(),
+                    to: renamed_a.clone(),
+                },
+                Op {
+                    from: b.clone(),
+                    to: renamed_b.clone(),
+                },
             ],
             Mode::Rename,
         );
@@ -1077,7 +1302,11 @@ mod tests {
         assert_eq!(reverted.len(), 1);
         assert_eq!(errors.len(), 1);
         assert_eq!(read(&b), "B");
-        assert_eq!(read(&renamed_a), "A", "failed revert leaves the file where it was");
+        assert_eq!(
+            read(&renamed_a),
+            "A",
+            "failed revert leaves the file where it was"
+        );
         assert_eq!(history_at(&hist).len(), 1, "failed entry kept for retry");
 
         // Clear the squatter and retry the same batch id.

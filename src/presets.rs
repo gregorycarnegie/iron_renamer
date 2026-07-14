@@ -2,10 +2,11 @@
 // small escaped-TSV text file. The GUI and the CLI (--preset) read the same
 // format, so a preset built visually can drive scripted runs.
 
-use std::collections::HashMap;
-use std::fs;
-use std::io;
-use std::path::{Path, PathBuf};
+use std::{
+    collections::HashMap,
+    fs, io,
+    path::{Path, PathBuf},
+};
 
 pub struct Preset {
     pub settings: HashMap<String, String>, // start, pad, mode, dest, collide, collide_pattern
@@ -37,7 +38,10 @@ pub fn resolve(arg: &str) -> PathBuf {
 }
 
 fn esc(s: &str) -> String {
-    s.replace('\\', "\\\\").replace('\t', "\\t").replace('\n', "\\n").replace('\r', "")
+    s.replace('\\', "\\\\")
+        .replace('\t', "\\t")
+        .replace('\n', "\\n")
+        .replace('\r', "")
 }
 
 fn unesc(s: &str) -> String {
@@ -78,7 +82,10 @@ pub fn save(path: &Path, p: &Preset) -> io::Result<()> {
 pub fn load(path: &Path) -> Result<Preset, String> {
     let body =
         fs::read_to_string(path).map_err(|e| format!("cannot read '{}': {e}", path.display()))?;
-    let mut p = Preset { settings: HashMap::new(), rules: Vec::new() };
+    let mut p = Preset {
+        settings: HashMap::new(),
+        rules: Vec::new(),
+    };
     for line in body.lines() {
         let line = line.trim_end_matches('\r');
         if line.starts_with('#') || line.trim().is_empty() {
@@ -90,7 +97,8 @@ pub fn load(path: &Path) -> Result<Preset, String> {
                 p.settings.insert((*k).to_string(), unesc(v));
             }
             ["rule", kind, mods, a, b] => {
-                p.rules.push(((*kind).to_string(), (*mods).to_string(), unesc(a), unesc(b)));
+                p.rules
+                    .push(((*kind).to_string(), (*mods).to_string(), unesc(a), unesc(b)));
             }
             _ => return Err(format!("bad preset line: {line}")),
         }
@@ -156,11 +164,24 @@ mod tests {
         let _ = fs::remove_dir_all(&d);
         let path = d.join("test.preset");
         let p = Preset {
-            settings: [("start".to_string(), "5".to_string()), ("dest".to_string(), "a\\b".to_string())]
-                .into(),
+            settings: [
+                ("start".to_string(), "5".to_string()),
+                ("dest".to_string(), "a\\b".to_string()),
+            ]
+            .into(),
             rules: vec![
-                ("replace".into(), "ci:first".into(), "tab\there".into(), "line\nbreak".into()),
-                ("names".into(), String::new(), "one\ntwo\nthree".into(), String::new()),
+                (
+                    "replace".into(),
+                    "ci:first".into(),
+                    "tab\there".into(),
+                    "line\nbreak".into(),
+                ),
+                (
+                    "names".into(),
+                    String::new(),
+                    "one\ntwo\nthree".into(),
+                    String::new(),
+                ),
             ],
         };
         save(&path, &p).unwrap();

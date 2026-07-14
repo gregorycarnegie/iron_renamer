@@ -27,12 +27,14 @@
 // Modifiers   |upper |lower |title |sub:START[,LEN] |pad:N |trim[:CHARS]
 //             |replace:OLD[,NEW] |fallback:TEXT |+N |-N |*N |/N
 
-use crate::engine::{Ctx, change_case, split_ext, CaseMode};
-use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
-use std::fs;
-use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
+use crate::engine::{CaseMode, Ctx, change_case, split_ext};
+use std::{
+    cell::{Cell, RefCell},
+    collections::HashMap,
+    fs,
+    path::PathBuf,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 pub fn expand(template: &str, full_name: &str, ctx: &Ctx) -> String {
     let mut out = String::with_capacity(template.len());
@@ -75,12 +77,24 @@ fn eval(body: &str, full_name: &str, ctx: &Ctx) -> Option<String> {
         "oname" => ostem.to_string(),
         "oext" => oext.to_string(),
         "index" => (ctx.index + 1).to_string(),
-        "num" => format!("{:0w$}", counter(&args, ctx.index, ctx.num, false)?, w = ctx.pad),
-        "hex" => format!("{:0w$x}", counter(&args, ctx.index, ctx.num, false)?, w = ctx.pad),
+        "num" => format!(
+            "{:0w$}",
+            counter(&args, ctx.index, ctx.num, false)?,
+            w = ctx.pad
+        ),
+        "hex" => format!(
+            "{:0w$x}",
+            counter(&args, ctx.index, ctx.num, false)?,
+            w = ctx.pad
+        ),
         "roman" => roman(counter(&args, ctx.index, ctx.num, false)?),
         "alpha" => alpha(counter(&args, ctx.index, ctx.num, true)?),
         "dirnum" => {
-            format!("{:0w$}", counter(&args, ctx.folder_num - 1, ctx.folder_num, false)?, w = ctx.pad)
+            format!(
+                "{:0w$}",
+                counter(&args, ctx.folder_num - 1, ctx.folder_num, false)?,
+                w = ctx.pad
+            )
         }
         "parent" => abs_parent(ctx)?
             .file_name()
@@ -107,7 +121,11 @@ fn eval(body: &str, full_name: &str, ctx: &Ctx) -> Option<String> {
             if let Some(off) = args.get(1) {
                 secs += parse_offset(off)?;
             }
-            let fmt = args.first().filter(|s| !s.is_empty()).copied().unwrap_or("yyyy-MM-dd");
+            let fmt = args
+                .first()
+                .filter(|s| !s.is_empty())
+                .copied()
+                .unwrap_or("yyyy-MM-dd");
             fmt_dt(fmt, secs)
         }
         "rand" => {
@@ -121,7 +139,9 @@ fn eval(body: &str, full_name: &str, ctx: &Ctx) -> Option<String> {
         "rands" => {
             let len: usize = args.first().and_then(|s| s.parse().ok()).unwrap_or(8);
             const CS: &[u8] = b"abcdefghijklmnopqrstuvwxyz0123456789";
-            (0..len).map(|_| CS[(rng() % CS.len() as u64) as usize] as char).collect()
+            (0..len)
+                .map(|_| CS[(rng() % CS.len() as u64) as usize] as char)
+                .collect()
         }
         "exif" => {
             let tag = args.first().copied().filter(|t| !t.is_empty())?;
@@ -223,8 +243,19 @@ fn roman(mut n: i64) -> String {
         return n.to_string();
     }
     const STEPS: [(i64, &str); 13] = [
-        (1000, "M"), (900, "CM"), (500, "D"), (400, "CD"), (100, "C"), (90, "XC"),
-        (50, "L"), (40, "XL"), (10, "X"), (9, "IX"), (5, "V"), (4, "IV"), (1, "I"),
+        (1000, "M"),
+        (900, "CM"),
+        (500, "D"),
+        (400, "CD"),
+        (100, "C"),
+        (90, "XC"),
+        (50, "L"),
+        (40, "XL"),
+        (10, "X"),
+        (9, "IX"),
+        (5, "V"),
+        (4, "IV"),
+        (1, "I"),
     ];
     let mut out = String::new();
     for (v, sym) in STEPS {
@@ -238,7 +269,10 @@ fn roman(mut n: i64) -> String {
 
 // Absolutize so relative paths like "img.jpg" still have a parent.
 fn abs_parent(ctx: &Ctx) -> Option<PathBuf> {
-    std::path::absolute(ctx.path).ok()?.parent().map(PathBuf::from)
+    std::path::absolute(ctx.path)
+        .ok()?
+        .parent()
+        .map(PathBuf::from)
 }
 
 fn crc32_cached(ctx: &Ctx) -> Option<String> {
@@ -254,7 +288,11 @@ fn crc32_cached(ctx: &Ctx) -> Option<String> {
         for &b in &data {
             crc ^= b as u32;
             for _ in 0..8 {
-                crc = if crc & 1 != 0 { (crc >> 1) ^ 0xEDB8_8320 } else { crc >> 1 };
+                crc = if crc & 1 != 0 {
+                    (crc >> 1) ^ 0xEDB8_8320
+                } else {
+                    crc >> 1
+                };
             }
         }
         let v = !crc;
@@ -307,13 +345,15 @@ pub(crate) fn epoch_from_civil(y: i64, m: u32, d: u32, h: u32, mi: u32, s: u32) 
 pub(crate) fn extract_datetime(text: &str) -> Option<i64> {
     static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
     let re = RE.get_or_init(|| {
-        regex::Regex::new(
-            r"(\d{4})\D?(\d{2})\D?(\d{2})(?:\D?(\d{2})\D?(\d{2})(?:\D?(\d{2}))?)?",
-        )
-        .unwrap()
+        regex::Regex::new(r"(\d{4})\D?(\d{2})\D?(\d{2})(?:\D?(\d{2})\D?(\d{2})(?:\D?(\d{2}))?)?")
+            .unwrap()
     });
     for c in re.captures_iter(text) {
-        let g = |i: usize| c.get(i).map(|m| m.as_str().parse::<u32>().unwrap()).unwrap_or(0);
+        let g = |i: usize| {
+            c.get(i)
+                .map(|m| m.as_str().parse::<u32>().unwrap())
+                .unwrap_or(0)
+        };
         let (y, m, d) = (c[1].parse::<i64>().unwrap(), g(2), g(3));
         let (h, mi, s) = (g(4), g(5), g(6));
         if (1900..=2999).contains(&y)
@@ -331,7 +371,10 @@ pub(crate) fn extract_datetime(text: &str) -> Option<i64> {
 
 /// "yyyy-MM-dd HH:mm" for a filesystem time; used by the item-details panel.
 pub fn dt_string(t: SystemTime) -> String {
-    let secs = t.duration_since(UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
+    let secs = t
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
     fmt_dt("yyyy-MM-dd HH:mm", secs)
 }
 
@@ -423,7 +466,11 @@ fn modify(val: String, m: &str) -> Option<String> {
             val.replace(old, new)
         }
         "fallback" => {
-            if val.is_empty() { arg.to_string() } else { val }
+            if val.is_empty() {
+                arg.to_string()
+            } else {
+                val
+            }
         }
         _ if matches!(op.as_bytes().first(), Some(b'+' | b'-' | b'*' | b'/')) => {
             let n: i64 = op[1..].parse().ok()?;
@@ -447,7 +494,14 @@ mod tests {
     use std::path::Path;
 
     fn ctx<'a>(path: &'a Path, original: &'a str) -> Ctx<'a> {
-        Ctx { index: 4, num: 7, pad: 3, folder_num: 2, path, original }
+        Ctx {
+            index: 4,
+            num: 7,
+            pad: 3,
+            folder_num: 2,
+            path,
+            original,
+        }
     }
 
     #[test]
@@ -515,9 +569,15 @@ mod tests {
         let (y, m, d, h, ..) = civil_utc(extract_datetime("trip 2024-05-01").unwrap());
         assert_eq!((y, m, d, h), (2024, 5, 1, 0));
         assert!(extract_datetime("no date here 123").is_none());
-        assert!(extract_datetime("9999 99 99").is_none(), "month/day ranges checked");
+        assert!(
+            extract_datetime("9999 99 99").is_none(),
+            "month/day ranges checked"
+        );
         // epoch_from_civil is the inverse of civil_utc
-        assert_eq!(civil_utc(epoch_from_civil(1999, 12, 31, 23, 59, 58)), (1999, 12, 31, 23, 59, 58));
+        assert_eq!(
+            civil_utc(epoch_from_civil(1999, 12, 31, 23, 59, 58)),
+            (1999, 12, 31, 23, 59, 58)
+        );
     }
 
     #[test]
@@ -542,7 +602,10 @@ mod tests {
         // ExifTool reports File: fields for any file type.
         assert_eq!(expand("<exif:FileType>", "data.txt", &c), "TXT");
         // A tag the file lacks resolves to "" so |fallback applies.
-        assert_eq!(expand("<artist|fallback:unknown>", "data.txt", &c), "unknown");
+        assert_eq!(
+            expand("<artist|fallback:unknown>", "data.txt", &c),
+            "unknown"
+        );
     }
 
     #[test]

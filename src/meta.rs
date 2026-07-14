@@ -3,13 +3,15 @@
 // as "exiftool" on PATH. All fields of a file are read in one call and
 // cached for the session.
 
-use std::cell::RefCell;
-use std::collections::HashMap;
-use std::ffi::OsStr;
-use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::rc::Rc;
-use std::sync::OnceLock;
+use std::{
+    cell::RefCell,
+    collections::HashMap,
+    ffi::OsStr,
+    path::{Path, PathBuf},
+    process::Command,
+    rc::Rc,
+    sync::OnceLock,
+};
 
 fn tool() -> Option<&'static PathBuf> {
     static TOOL: OnceLock<Option<PathBuf>> = OnceLock::new();
@@ -46,7 +48,12 @@ pub fn available() -> bool {
 /// A metadata field (case-insensitive ExifTool tag name) for a file.
 /// None = ExifTool unavailable or the file unreadable; Some("") = tag absent.
 pub fn get(path: &Path, tag: &str) -> Option<String> {
-    Some(fields(path)?.get(&tag.to_ascii_lowercase()).cloned().unwrap_or_default())
+    Some(
+        fields(path)?
+            .get(&tag.to_ascii_lowercase())
+            .cloned()
+            .unwrap_or_default(),
+    )
 }
 
 type Fields = Rc<HashMap<String, String>>;
@@ -68,7 +75,15 @@ fn fields(path: &Path) -> Option<Fields> {
 fn read_fields(path: &Path) -> Option<Fields> {
     let t = tool()?;
     // -s2: "TagName: value" lines · -fast: skip slow scans · -m: ignore minor errors
-    let out = run(t, &[OsStr::new("-s2"), OsStr::new("-fast"), OsStr::new("-m"), path.as_os_str()])?;
+    let out = run(
+        t,
+        &[
+            OsStr::new("-s2"),
+            OsStr::new("-fast"),
+            OsStr::new("-m"),
+            path.as_os_str(),
+        ],
+    )?;
     let mut map = HashMap::new();
     for line in out.lines() {
         if let Some((k, v)) = line.split_once(": ") {

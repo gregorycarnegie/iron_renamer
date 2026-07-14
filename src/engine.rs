@@ -4,8 +4,10 @@
 
 use crate::tags;
 use regex::Regex;
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 // ───────────────────────── rule model
 
@@ -27,8 +29,8 @@ pub enum Occurrence {
 pub enum CaseMode {
     Lower,
     Upper,
-    Title,  // Each Word
-    First,  // sentence case
+    Title, // Each Word
+    First, // sentence case
     Invert,
 }
 
@@ -39,9 +41,9 @@ pub enum CaseScope {
 }
 
 pub enum InsertAt {
-    Pos(usize),     // in chars; clamped to the end
+    Pos(usize), // in chars; clamped to the end
     FromEnd(usize),
-    Before(Regex),  // first match; no match = no change
+    Before(Regex), // first match; no match = no change
     After(Regex),
 }
 
@@ -69,16 +71,38 @@ pub enum RenumMode {
 }
 
 pub enum Rule {
-    Replace { find: String, repl: String, ci: bool, occ: Occurrence },
+    Replace {
+        find: String,
+        repl: String,
+        ci: bool,
+        occ: Occurrence,
+    },
     Regex(Regex, String),
-    Case { mode: CaseMode, scope: CaseScope },
+    Case {
+        mode: CaseMode,
+        scope: CaseScope,
+    },
     Pattern(String),
-    Insert { text: String, at: InsertAt },
+    Insert {
+        text: String,
+        at: InsertAt,
+    },
     Remove(RemoveWhat),
-    Trim { chars: String, at: TrimAt, invert: bool }, // empty chars = whitespace
-    Renumber { nth: usize, mode: RenumMode, pad: usize }, // pad 0 = keep width
-    MoveText { pat: Regex, to: InsertAt },
-    Swap(String), // swap around first separator: "a - b" -> "b - a"
+    Trim {
+        chars: String,
+        at: TrimAt,
+        invert: bool,
+    }, // empty chars = whitespace
+    Renumber {
+        nth: usize,
+        mode: RenumMode,
+        pad: usize,
+    }, // pad 0 = keep width
+    MoveText {
+        pat: Regex,
+        to: InsertAt,
+    },
+    Swap(String),           // swap around first separator: "a - b" -> "b - a"
     ListNames(Vec<String>), // one explicit new name per list position
 }
 
@@ -112,8 +136,8 @@ pub struct RuleEntry {
 
 /// Per-file context a rule application runs in.
 pub struct Ctx<'a> {
-    pub index: usize,      // 0-based list position
-    pub num: usize,        // counter (start + index)
+    pub index: usize, // 0-based list position
+    pub num: usize,   // counter (start + index)
     pub pad: usize,
     pub folder_num: usize, // 1-based position among list items in the same folder
     pub path: &'a Path,
@@ -130,7 +154,11 @@ pub fn split_ext(name: &str) -> (&str, &str) {
 }
 
 fn join_ext(stem: &str, ext: &str) -> String {
-    if ext.is_empty() { stem.to_string() } else { format!("{stem}.{ext}") }
+    if ext.is_empty() {
+        stem.to_string()
+    } else {
+        format!("{stem}.{ext}")
+    }
 }
 
 pub fn apply_entry(e: &RuleEntry, name: &str, ctx: &Ctx) -> String {
@@ -156,12 +184,15 @@ pub fn apply_entry(e: &RuleEntry, name: &str, ctx: &Ctx) -> String {
 // name, which tags resolve against.
 fn apply_rule(rule: &Rule, s: &str, full: &str, ctx: &Ctx) -> String {
     match rule {
-        Rule::Replace { find, repl, ci, occ } => {
-            replace_occ(s, find, &tags::expand(repl, full, ctx), *ci, occ)
-        }
-        Rule::Regex(re, repl) => {
-            re.replace_all(s, tags::expand(repl, full, ctx).as_str()).into_owned()
-        }
+        Rule::Replace {
+            find,
+            repl,
+            ci,
+            occ,
+        } => replace_occ(s, find, &tags::expand(repl, full, ctx), *ci, occ),
+        Rule::Regex(re, repl) => re
+            .replace_all(s, tags::expand(repl, full, ctx).as_str())
+            .into_owned(),
         Rule::Case { mode, scope } => case_scoped(s, *mode, scope),
         Rule::Pattern(t) => tags::expand(t, full, ctx),
         Rule::Insert { text, at } => insert_at(s, &tags::expand(text, full, ctx), at),
@@ -180,9 +211,10 @@ fn apply_rule(rule: &Rule, s: &str, full: &str, ctx: &Ctx) -> String {
             Some((a, b)) => format!("{b}{sep}{a}"),
             None => s.to_string(),
         },
-        Rule::ListNames(names) => {
-            names.get(ctx.index).cloned().unwrap_or_else(|| s.to_string())
-        }
+        Rule::ListNames(names) => names
+            .get(ctx.index)
+            .cloned()
+            .unwrap_or_else(|| s.to_string()),
     }
 }
 
@@ -219,13 +251,19 @@ fn replace_occ(s: &str, find: &str, repl: &str, ci: bool, occ: &Occurrence) -> S
         let re = Regex::new(&format!("(?i){}", regex::escape(find))).unwrap();
         re.find_iter(s).map(|m| (m.start(), m.end())).collect()
     } else {
-        s.match_indices(find).map(|(i, _)| (i, i + find.len())).collect()
+        s.match_indices(find)
+            .map(|(i, _)| (i, i + find.len()))
+            .collect()
     };
     let picked: Vec<(usize, usize)> = match occ {
         Occurrence::All => ranges,
         Occurrence::First => ranges.first().into_iter().copied().collect(),
         Occurrence::Last => ranges.last().into_iter().copied().collect(),
-        Occurrence::Nth(n) => ranges.get(n.saturating_sub(1)).into_iter().copied().collect(),
+        Occurrence::Nth(n) => ranges
+            .get(n.saturating_sub(1))
+            .into_iter()
+            .copied()
+            .collect(),
     };
     let mut out = String::with_capacity(s.len());
     let mut prev = 0;
@@ -299,8 +337,10 @@ fn case_scoped(s: &str, mode: CaseMode, scope: &CaseScope) -> String {
             }
             let end = (start + len).min(chars.len());
             let seg: String = chars[*start..end].iter().collect();
-            let (head, tail): (String, String) =
-                (chars[..*start].iter().collect(), chars[end..].iter().collect());
+            let (head, tail): (String, String) = (
+                chars[..*start].iter().collect(),
+                chars[end..].iter().collect(),
+            );
             format!("{head}{}{tail}", change_case(&seg, mode))
         }
         CaseScope::Match(re) => {
@@ -320,7 +360,10 @@ fn case_scoped(s: &str, mode: CaseMode, scope: &CaseScope) -> String {
 fn insert_at(s: &str, text: &str, at: &InsertAt) -> String {
     let char_len = s.chars().count();
     let byte_of = |nchars: usize| {
-        s.char_indices().nth(nchars).map(|(i, _)| i).unwrap_or(s.len())
+        s.char_indices()
+            .nth(nchars)
+            .map(|(i, _)| i)
+            .unwrap_or(s.len())
     };
     let pos = match at {
         InsertAt::Pos(n) => byte_of((*n).min(char_len)),
@@ -396,7 +439,11 @@ fn strip_diacritic(c: char) -> char {
 
 fn trim(s: &str, chars: &str, at: TrimAt, invert: bool) -> String {
     let hit = |c: char| {
-        let in_set = if chars.is_empty() { c.is_whitespace() } else { chars.contains(c) };
+        let in_set = if chars.is_empty() {
+            c.is_whitespace()
+        } else {
+            chars.contains(c)
+        };
         in_set != invert
     };
     match at {
@@ -475,7 +522,10 @@ pub fn parse_pos(s: &str) -> Result<InsertAt, String> {
                 .parse()
                 .map(InsertAt::FromEnd)
                 .map_err(|_| format!("bad position '{s}'")),
-            None => s.parse().map(InsertAt::Pos).map_err(|_| format!("bad position '{s}'")),
+            None => s
+                .parse()
+                .map(InsertAt::Pos)
+                .map_err(|_| format!("bad position '{s}'")),
         },
     }
 }
@@ -524,10 +574,16 @@ fn parse_case_scope(s: &str) -> Result<CaseScope, String> {
 
 fn parse_renum(s: &str) -> Result<RenumMode, String> {
     if let Some(d) = s.strip_prefix('+') {
-        return d.parse().map(RenumMode::Delta).map_err(|_| format!("bad delta '{s}'"));
+        return d
+            .parse()
+            .map(RenumMode::Delta)
+            .map_err(|_| format!("bad delta '{s}'"));
     }
     if s.starts_with('-') {
-        return s.parse().map(RenumMode::Delta).map_err(|_| format!("bad delta '{s}'"));
+        return s
+            .parse()
+            .map(RenumMode::Delta)
+            .map_err(|_| format!("bad delta '{s}'"));
     }
     let (start, step) = match s.split_once('/') {
         Some((a, b)) => (a, b),
@@ -572,7 +628,12 @@ pub fn build_rule(kind: &str, mods: &[&str], a: &str, b: &str) -> Result<(Rule, 
             if a.is_empty() {
                 return Err("replace needs text to find".into());
             }
-            Rule::Replace { find: a.into(), repl: b.into(), ci, occ }
+            Rule::Replace {
+                find: a.into(),
+                repl: b.into(),
+                ci,
+                occ,
+            }
         }
         "regex" => {
             if let Some(m) = rest.first() {
@@ -590,9 +651,16 @@ pub fn build_rule(kind: &str, mods: &[&str], a: &str, b: &str) -> Result<(Rule, 
                 "title" => CaseMode::Title,
                 "first" => CaseMode::First,
                 "invert" => CaseMode::Invert,
-                other => return Err(format!("unknown case '{other}' (lower|upper|title|first|invert)")),
+                other => {
+                    return Err(format!(
+                        "unknown case '{other}' (lower|upper|title|first|invert)"
+                    ));
+                }
             };
-            Rule::Case { mode, scope: parse_case_scope(b)? }
+            Rule::Case {
+                mode,
+                scope: parse_case_scope(b)?,
+            }
         }
         "pattern" => {
             if let Some(m) = rest.first() {
@@ -610,7 +678,10 @@ pub fn build_rule(kind: &str, mods: &[&str], a: &str, b: &str) -> Result<(Rule, 
             if a.is_empty() {
                 return Err("insert needs text".into());
             }
-            Rule::Insert { text: a.into(), at: parse_pos(b)? }
+            Rule::Insert {
+                text: a.into(),
+                at: parse_pos(b)?,
+            }
         }
         "remove" => {
             if let Some(m) = rest.first() {
@@ -630,7 +701,11 @@ pub fn build_rule(kind: &str, mods: &[&str], a: &str, b: &str) -> Result<(Rule, 
                     m => return Err(unknown(m)),
                 }
             }
-            Rule::Trim { chars: a.into(), at, invert }
+            Rule::Trim {
+                chars: a.into(),
+                at,
+                invert,
+            }
         }
         "renumber" => {
             let mut pad = 0;
@@ -640,11 +715,17 @@ pub fn build_rule(kind: &str, mods: &[&str], a: &str, b: &str) -> Result<(Rule, 
                     None => return Err(unknown(m)),
                 }
             }
-            let nth: usize = a.parse().map_err(|_| format!("bad number position '{a}'"))?;
+            let nth: usize = a
+                .parse()
+                .map_err(|_| format!("bad number position '{a}'"))?;
             if nth == 0 {
                 return Err("number position is 1-based".into());
             }
-            Rule::Renumber { nth, mode: parse_renum(b)?, pad }
+            Rule::Renumber {
+                nth,
+                mode: parse_renum(b)?,
+                pad,
+            }
         }
         "move" => {
             if let Some(m) = rest.first() {
@@ -653,7 +734,10 @@ pub fn build_rule(kind: &str, mods: &[&str], a: &str, b: &str) -> Result<(Rule, 
             if a.is_empty() {
                 return Err("move needs text to move".into());
             }
-            Rule::MoveText { pat: pat_or_literal(a)?, to: parse_pos(b)? }
+            Rule::MoveText {
+                pat: pat_or_literal(a)?,
+                to: parse_pos(b)?,
+            }
         }
         "swap" => {
             if let Some(m) = rest.first() {
@@ -690,7 +774,11 @@ pub fn build_cond(spec: &str, value: &str) -> Result<Cond, String> {
         "new" => CondField::Current,
         "ext" => CondField::Ext,
         "path" => CondField::Path,
-        other => return Err(format!("unknown condition field '{other}' (name|new|ext|path)")),
+        other => {
+            return Err(format!(
+                "unknown condition field '{other}' (name|new|ext|path)"
+            ));
+        }
     };
     let op = match op {
         "has" => CondOp::Has,
@@ -698,9 +786,18 @@ pub fn build_cond(spec: &str, value: &str) -> Result<Cond, String> {
         "ends" => CondOp::Ends,
         "eq" => CondOp::Eq,
         "re" => CondOp::Re(re(value)?),
-        other => return Err(format!("unknown condition op '{other}' (has|starts|ends|eq|re)")),
+        other => {
+            return Err(format!(
+                "unknown condition op '{other}' (has|starts|ends|eq|re)"
+            ));
+        }
     };
-    Ok(Cond { field, op, value: value.into(), negate })
+    Ok(Cond {
+        field,
+        op,
+        value: value.into(),
+        negate,
+    })
 }
 
 // ───────────────────────── sorting and globbing
@@ -743,9 +840,17 @@ pub fn expand(arg: &str, dirs: bool) -> Vec<PathBuf> {
     if let Ok(entries) = fs::read_dir(&dir) {
         for e in entries.flatten() {
             let n = e.file_name().to_string_lossy().into_owned();
-            let kind_ok = if dirs { e.path().is_dir() } else { e.path().is_file() };
+            let kind_ok = if dirs {
+                e.path().is_dir()
+            } else {
+                e.path().is_file()
+            };
             if kind_ok && wild_match(&pat.to_lowercase(), &n.to_lowercase()) {
-                out.push(if dir.as_os_str() == "." { PathBuf::from(n) } else { dir.join(n) });
+                out.push(if dir.as_os_str() == "." {
+                    PathBuf::from(n)
+                } else {
+                    dir.join(n)
+                });
             }
         }
     }
@@ -811,7 +916,9 @@ pub fn wild_match(pat: &str, s: &str) -> bool {
 }
 
 pub fn name_of(p: &Path) -> String {
-    p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
+    p.file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -820,96 +927,245 @@ mod tests {
 
     fn entry(kind: &str, mods: &[&str], a: &str, b: &str) -> RuleEntry {
         let (rule, part) = build_rule(kind, mods, a, b).unwrap();
-        RuleEntry { rule, part, cond: None }
+        RuleEntry {
+            rule,
+            part,
+            cond: None,
+        }
     }
 
     fn run(e: &RuleEntry, name: &str) -> String {
         let path = Path::new("C:/photos/trip").join(name);
-        let ctx = Ctx { index: 6, num: 7, pad: 3, folder_num: 1, path: &path, original: name };
+        let ctx = Ctx {
+            index: 6,
+            num: 7,
+            pad: 3,
+            folder_num: 1,
+            path: &path,
+            original: name,
+        };
         apply_entry(e, name, &ctx)
     }
 
     #[test]
     fn replace_options() {
-        assert_eq!(run(&entry("replace", &[], " ", "_"), "a b c.txt"), "a_b_c.txt");
-        assert_eq!(run(&entry("replace", &["first"], " ", "_"), "a b c.txt"), "a_b c.txt");
-        assert_eq!(run(&entry("replace", &["last"], " ", "_"), "a b c.txt"), "a b_c.txt");
-        assert_eq!(run(&entry("replace", &["n2"], "o", "0"), "foo woof.txt"), "fo0 woof.txt");
-        assert_eq!(run(&entry("replace", &["ci"], "IMG", "pic"), "img_Img.jpg"), "pic_pic.jpg");
-        assert_eq!(run(&entry("replace", &[], "É", "E"), "cafÉ.txt"), "cafE.txt");
+        assert_eq!(
+            run(&entry("replace", &[], " ", "_"), "a b c.txt"),
+            "a_b_c.txt"
+        );
+        assert_eq!(
+            run(&entry("replace", &["first"], " ", "_"), "a b c.txt"),
+            "a_b c.txt"
+        );
+        assert_eq!(
+            run(&entry("replace", &["last"], " ", "_"), "a b c.txt"),
+            "a b_c.txt"
+        );
+        assert_eq!(
+            run(&entry("replace", &["n2"], "o", "0"), "foo woof.txt"),
+            "fo0 woof.txt"
+        );
+        assert_eq!(
+            run(&entry("replace", &["ci"], "IMG", "pic"), "img_Img.jpg"),
+            "pic_pic.jpg"
+        );
+        assert_eq!(
+            run(&entry("replace", &[], "É", "E"), "cafÉ.txt"),
+            "cafE.txt"
+        );
     }
 
     #[test]
     fn apply_to_parts() {
-        assert_eq!(run(&entry("case", &["ext"], "lower", ""), "Photo.JPG"), "Photo.jpg");
-        assert_eq!(run(&entry("case", &["name"], "upper", ""), "photo.jpg"), "PHOTO.jpg");
-        assert_eq!(run(&entry("replace", &["name"], "o", "0"), "photo.mov"), "ph0t0.mov");
-        assert_eq!(run(&entry("case", &[], "lower", ""), "Photo.JPG"), "photo.jpg");
+        assert_eq!(
+            run(&entry("case", &["ext"], "lower", ""), "Photo.JPG"),
+            "Photo.jpg"
+        );
+        assert_eq!(
+            run(&entry("case", &["name"], "upper", ""), "photo.jpg"),
+            "PHOTO.jpg"
+        );
+        assert_eq!(
+            run(&entry("replace", &["name"], "o", "0"), "photo.mov"),
+            "ph0t0.mov"
+        );
+        assert_eq!(
+            run(&entry("case", &[], "lower", ""), "Photo.JPG"),
+            "photo.jpg"
+        );
         // no extension: ext rules are a no-op, name rules hit the whole thing
-        assert_eq!(run(&entry("case", &["ext"], "upper", ""), "readme"), "readme");
-        assert_eq!(run(&entry("case", &["name"], "upper", ""), "readme"), "README");
+        assert_eq!(
+            run(&entry("case", &["ext"], "upper", ""), "readme"),
+            "readme"
+        );
+        assert_eq!(
+            run(&entry("case", &["name"], "upper", ""), "readme"),
+            "README"
+        );
     }
 
     #[test]
     fn case_modes_and_scopes() {
-        assert_eq!(run(&entry("case", &[], "title", ""), "my file.txt"), "My File.Txt");
-        assert_eq!(run(&entry("case", &["name"], "first", ""), "my file.txt"), "My file.txt");
+        assert_eq!(
+            run(&entry("case", &[], "title", ""), "my file.txt"),
+            "My File.Txt"
+        );
+        assert_eq!(
+            run(&entry("case", &["name"], "first", ""), "my file.txt"),
+            "My file.txt"
+        );
         assert_eq!(run(&entry("case", &[], "invert", ""), "aBc.TXT"), "AbC.txt");
-        assert_eq!(run(&entry("case", &["name"], "upper", "at:0,2"), "abcdef.txt"), "ABcdef.txt");
-        assert_eq!(run(&entry("case", &[], "upper", "img"), "img_img.jpg"), "IMG_IMG.jpg");
+        assert_eq!(
+            run(&entry("case", &["name"], "upper", "at:0,2"), "abcdef.txt"),
+            "ABcdef.txt"
+        );
+        assert_eq!(
+            run(&entry("case", &[], "upper", "img"), "img_img.jpg"),
+            "IMG_IMG.jpg"
+        );
     }
 
     #[test]
     fn insert_positions() {
-        assert_eq!(run(&entry("insert", &["name"], "new_", "start"), "a.txt"), "new_a.txt");
-        assert_eq!(run(&entry("insert", &["name"], "_old", "end"), "a.txt"), "a_old.txt");
-        assert_eq!(run(&entry("insert", &["name"], "-", "2"), "abcd.txt"), "ab-cd.txt");
-        assert_eq!(run(&entry("insert", &["name"], "-", "-1"), "abcd.txt"), "abc-d.txt");
-        assert_eq!(run(&entry("insert", &[], "X", "before:cd"), "abcd.txt"), "abXcd.txt");
-        assert_eq!(run(&entry("insert", &[], "X", "after:cd"), "abcd.txt"), "abcdX.txt");
-        assert_eq!(run(&entry("insert", &[], "X", "rbefore:\\d+"), "ab12.txt"), "abX12.txt");
-        assert_eq!(run(&entry("insert", &[], "X", "before:zzz"), "abcd.txt"), "abcd.txt");
+        assert_eq!(
+            run(&entry("insert", &["name"], "new_", "start"), "a.txt"),
+            "new_a.txt"
+        );
+        assert_eq!(
+            run(&entry("insert", &["name"], "_old", "end"), "a.txt"),
+            "a_old.txt"
+        );
+        assert_eq!(
+            run(&entry("insert", &["name"], "-", "2"), "abcd.txt"),
+            "ab-cd.txt"
+        );
+        assert_eq!(
+            run(&entry("insert", &["name"], "-", "-1"), "abcd.txt"),
+            "abc-d.txt"
+        );
+        assert_eq!(
+            run(&entry("insert", &[], "X", "before:cd"), "abcd.txt"),
+            "abXcd.txt"
+        );
+        assert_eq!(
+            run(&entry("insert", &[], "X", "after:cd"), "abcd.txt"),
+            "abcdX.txt"
+        );
+        assert_eq!(
+            run(&entry("insert", &[], "X", "rbefore:\\d+"), "ab12.txt"),
+            "abX12.txt"
+        );
+        assert_eq!(
+            run(&entry("insert", &[], "X", "before:zzz"), "abcd.txt"),
+            "abcd.txt"
+        );
         // tags in inserted text
-        assert_eq!(run(&entry("insert", &["name"], "_<num>", "end"), "a.txt"), "a_007.txt");
+        assert_eq!(
+            run(&entry("insert", &["name"], "_<num>", "end"), "a.txt"),
+            "a_007.txt"
+        );
     }
 
     #[test]
     fn remove_kinds() {
-        assert_eq!(run(&entry("remove", &["name"], "pos:1,2", ""), "abcd.txt"), "ad.txt");
-        assert_eq!(run(&entry("remove", &[], "chars:_-", ""), "a_b-c.txt"), "abc.txt");
-        assert_eq!(run(&entry("remove", &["name"], "digits", ""), "a1b2.txt"), "ab.txt");
-        assert_eq!(run(&entry("remove", &["name"], "upper", ""), "aXbY.txt"), "ab.txt");
-        assert_eq!(run(&entry("remove", &["name"], "lower", ""), "aXbY.txt"), "XY.txt");
-        assert_eq!(run(&entry("remove", &[], "diacritics", ""), "café_señor.txt"), "cafe_senor.txt");
-        assert_eq!(run(&entry("remove", &["name"], "re:\\(\\d+\\)", ""), "a(1).txt"), "a.txt");
-        assert_eq!(run(&entry("remove", &[], "copy", ""), "a copy.txt"), "a .txt");
+        assert_eq!(
+            run(&entry("remove", &["name"], "pos:1,2", ""), "abcd.txt"),
+            "ad.txt"
+        );
+        assert_eq!(
+            run(&entry("remove", &[], "chars:_-", ""), "a_b-c.txt"),
+            "abc.txt"
+        );
+        assert_eq!(
+            run(&entry("remove", &["name"], "digits", ""), "a1b2.txt"),
+            "ab.txt"
+        );
+        assert_eq!(
+            run(&entry("remove", &["name"], "upper", ""), "aXbY.txt"),
+            "ab.txt"
+        );
+        assert_eq!(
+            run(&entry("remove", &["name"], "lower", ""), "aXbY.txt"),
+            "XY.txt"
+        );
+        assert_eq!(
+            run(&entry("remove", &[], "diacritics", ""), "café_señor.txt"),
+            "cafe_senor.txt"
+        );
+        assert_eq!(
+            run(&entry("remove", &["name"], "re:\\(\\d+\\)", ""), "a(1).txt"),
+            "a.txt"
+        );
+        assert_eq!(
+            run(&entry("remove", &[], "copy", ""), "a copy.txt"),
+            "a .txt"
+        );
     }
 
     #[test]
     fn trim_kinds() {
-        assert_eq!(run(&entry("trim", &["name"], "", ""), " a b .txt"), "a b.txt");
-        assert_eq!(run(&entry("trim", &["name", "start"], "_", ""), "__a__.txt"), "a__.txt");
-        assert_eq!(run(&entry("trim", &["name", "all"], "_", ""), "_a_b_.txt"), "ab.txt");
+        assert_eq!(
+            run(&entry("trim", &["name"], "", ""), " a b .txt"),
+            "a b.txt"
+        );
+        assert_eq!(
+            run(&entry("trim", &["name", "start"], "_", ""), "__a__.txt"),
+            "a__.txt"
+        );
+        assert_eq!(
+            run(&entry("trim", &["name", "all"], "_", ""), "_a_b_.txt"),
+            "ab.txt"
+        );
         // inverse: keep only underscores and letters a/b at the edges trimmed away
-        assert_eq!(run(&entry("trim", &["name", "inv"], "ab", ""), "xxabyy.txt"), "ab.txt");
+        assert_eq!(
+            run(&entry("trim", &["name", "inv"], "ab", ""), "xxabyy.txt"),
+            "ab.txt"
+        );
     }
 
     #[test]
     fn renumber_modes() {
         // ctx.index is 6
-        assert_eq!(run(&entry("renumber", &[], "1", "+10"), "img005.jpg"), "img015.jpg");
-        assert_eq!(run(&entry("renumber", &[], "1", "-9"), "ep12.mkv"), "ep03.mkv");
-        assert_eq!(run(&entry("renumber", &[], "2", "+1"), "s01e04.mkv"), "s01e05.mkv");
-        assert_eq!(run(&entry("renumber", &["pad4"], "1", "100/10"), "img5.jpg"), "img0160.jpg");
-        assert_eq!(run(&entry("renumber", &[], "3", "+1"), "a1b2.txt"), "a1b2.txt");
+        assert_eq!(
+            run(&entry("renumber", &[], "1", "+10"), "img005.jpg"),
+            "img015.jpg"
+        );
+        assert_eq!(
+            run(&entry("renumber", &[], "1", "-9"), "ep12.mkv"),
+            "ep03.mkv"
+        );
+        assert_eq!(
+            run(&entry("renumber", &[], "2", "+1"), "s01e04.mkv"),
+            "s01e05.mkv"
+        );
+        assert_eq!(
+            run(&entry("renumber", &["pad4"], "1", "100/10"), "img5.jpg"),
+            "img0160.jpg"
+        );
+        assert_eq!(
+            run(&entry("renumber", &[], "3", "+1"), "a1b2.txt"),
+            "a1b2.txt"
+        );
     }
 
     #[test]
     fn move_and_swap() {
-        assert_eq!(run(&entry("move", &["name"], "re:\\d+", "start"), "abc123.txt"), "123abc.txt");
-        assert_eq!(run(&entry("move", &["name"], "CD", "end"), "abCDef.txt"), "abefCD.txt");
-        assert_eq!(run(&entry("swap", &["name"], " - ", ""), "Artist - Title.mp3"), "Title - Artist.mp3");
-        assert_eq!(run(&entry("swap", &["name"], " - ", ""), "NoSep.mp3"), "NoSep.mp3");
+        assert_eq!(
+            run(&entry("move", &["name"], "re:\\d+", "start"), "abc123.txt"),
+            "123abc.txt"
+        );
+        assert_eq!(
+            run(&entry("move", &["name"], "CD", "end"), "abCDef.txt"),
+            "abefCD.txt"
+        );
+        assert_eq!(
+            run(&entry("swap", &["name"], " - ", ""), "Artist - Title.mp3"),
+            "Title - Artist.mp3"
+        );
+        assert_eq!(
+            run(&entry("swap", &["name"], " - ", ""), "NoSep.mp3"),
+            "NoSep.mp3"
+        );
     }
 
     #[test]
@@ -917,7 +1173,10 @@ mod tests {
         let names = "zero\none\ntwo\nthree\nfour\nfive\nsix\nseven";
         // ctx.index is 6 -> "six"; applied to the stem it keeps the extension
         assert_eq!(run(&entry("names", &[], names, ""), "old.txt"), "six");
-        assert_eq!(run(&entry("names", &["name"], names, ""), "old.txt"), "six.txt");
+        assert_eq!(
+            run(&entry("names", &["name"], names, ""), "old.txt"),
+            "six.txt"
+        );
     }
 
     #[test]
@@ -941,10 +1200,19 @@ mod tests {
 
     #[test]
     fn pattern_uses_shared_tags() {
-        assert_eq!(run(&entry("pattern", &[], "x_<num>.<ext>", ""), "old.jpg"), "x_007.jpg");
-        assert_eq!(run(&entry("pattern", &[], "<parent>_<name>!", ""), "noext"), "trip_noext!");
+        assert_eq!(
+            run(&entry("pattern", &[], "x_<num>.<ext>", ""), "old.jpg"),
+            "x_007.jpg"
+        );
+        assert_eq!(
+            run(&entry("pattern", &[], "<parent>_<name>!", ""), "noext"),
+            "trip_noext!"
+        );
         // pattern applied to the stem only keeps the real extension
-        assert_eq!(run(&entry("pattern", &["name"], "<name>_<num>", ""), "a.jpg"), "a_007.jpg");
+        assert_eq!(
+            run(&entry("pattern", &["name"], "<name>_<num>", ""), "a.jpg"),
+            "a_007.jpg"
+        );
     }
 
     #[test]
