@@ -365,6 +365,63 @@ pub fn execute(ops: Vec<Op>, mode: Mode) -> ExecResult {
     ExecResult { renamed, failed }
 }
 
+// ───────────────────────── preview export
+
+/// Write the preview to `path`; the extension picks the format:
+/// .csv, .json, or plain text ("old -> target") for anything else.
+pub fn export_preview(items: &[PlanItem], path: &Path) -> io::Result<()> {
+    use crate::presets::{csv_field, json_str};
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+    let status = |it: &PlanItem| match (&it.issue, it.changed) {
+        (Some(e), _) => e.clone(),
+        (None, true) => "ok".to_string(),
+        (None, false) => "unchanged".to_string(),
+    };
+    let body = match ext.as_str() {
+        "csv" => {
+            let mut s = String::from("old,new,target,status\n");
+            for it in items {
+                s.push_str(&format!(
+                    "{},{},{},{}\n",
+                    csv_field(&name_of(&it.from)),
+                    csv_field(&it.new_name),
+                    csv_field(&it.target.display().to_string()),
+                    csv_field(&status(it)),
+                ));
+            }
+            s
+        }
+        "json" => {
+            let rows: Vec<String> = items
+                .iter()
+                .map(|it| {
+                    format!(
+                        "  {{\"old\": {}, \"new\": {}, \"target\": {}, \"status\": {}}}",
+                        json_str(&name_of(&it.from)),
+                        json_str(&it.new_name),
+                        json_str(&it.target.display().to_string()),
+                        json_str(&status(it)),
+                    )
+                })
+                .collect();
+            format!("[\n{}\n]\n", rows.join(",\n"))
+        }
+        _ => {
+            let mut s = String::new();
+            for it in items {
+                s.push_str(&format!(
+                    "{}  ->  {}   [{}]\n",
+                    it.from.display(),
+                    it.target.display(),
+                    status(it),
+                ));
+            }
+            s
+        }
+    };
+    fs::write(path, body)
+}
+
 // ───────────────────────── history
 
 fn history_path() -> PathBuf {

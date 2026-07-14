@@ -47,10 +47,10 @@ Compared with the [Advanced Renamer v4 user guide](https://www.advancedrenamer.c
 
 ### Batch features
 
-- [ ] Add Rename/Copy/Move modes with a previewed destination path, tag-expanded subfolders, and automatic directory creation.
-- [ ] Add collision policies: fail, append incrementing number/letter, or append a tag pattern.
-- [ ] Save/load rule presets and remember recent presets/patterns.
-- [ ] Import original/new names from CSV and export the preview as text, CSV, or JSON.
+- [x] Add Rename/Copy/Move modes with a previewed destination path, tag-expanded subfolders, and automatic directory creation. (CLI `--copy-to`/`--move-to DEST`; GUI OUTPUT section; cross-volume moves fall back to copy+delete; moves are undoable, copies are not)
+- [x] Add collision policies: fail, append incrementing number/letter, or append a tag pattern. (resolved at plan time so the preview shows final names; CLI `--collide`)
+- [x] Save/load rule presets and remember recent presets/patterns. (`.preset` text files; GUI save/load chips; CLI `--preset FILE|NAME`; dialogs open in the preset folder, which serves as the recents list — no separate MRU)
+- [x] Import original/new names from CSV and export the preview as text, CSV, or JSON. (GUI Import CSV/Export buttons; CLI `--export FILE`)
 
 ## P2 — media and automation
 
@@ -58,7 +58,7 @@ Compared with the [Advanced Renamer v4 user guide](https://www.advancedrenamer.c
 - [ ] Add common image dimensions/date-taken, audio artist/album/track, video duration, and document author/title tags.
 - [ ] Add file-pair mode so sidecars and alternate formats with the same stem receive the same generated name.
 - [ ] Add a Timestamp rule for created/modified/accessed times using absolute, delta, filename-pattern, parent-folder, or metadata values.
-- [ ] Let the CLI execute a saved preset against a directory, recursive tree, item-list file, or explicit files, with masks/regex, sorting, verify-only mode, and a result log.
+- [ ] Let the CLI execute a saved preset against a directory, recursive tree, item-list file, or explicit files, with masks/regex, sorting, verify-only mode, and a result log. (partly done: `--preset` runs a saved preset against globs/files, preview is the verify mode, `--export` is the log; missing: recursive tree and item-list input)
 - [ ] Add keyboard shortcuts for add/remove/select/search, manual override, and starting a batch.
 
 ## P3 — only if real users need full parity

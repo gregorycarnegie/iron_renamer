@@ -197,6 +197,10 @@ export component MainWindow inherits Window {
     in-out property <string> collide: "fail";
     in-out property <string> collide_pattern: "";
     callback output_changed();
+    callback import_csv();
+    callback export_preview();
+    callback save_preset();
+    callback load_preset();
 
     VerticalLayout {
         padding: 0;
@@ -539,7 +543,13 @@ export component MainWindow inherits Window {
                     }
 
                     Rectangle { height: 6px; }
-                    SectionTitle { text: "RULE STACK — RUNS TOP TO BOTTOM"; }
+                    HorizontalLayout {
+                        spacing: 6px;
+                        SectionTitle { text: "RULE STACK — TOP TO BOTTOM"; vertical-alignment: center; }
+                        Rectangle { horizontal-stretch: 1; }
+                        Chip { label: "save"; clicked => { root.save_preset(); } }
+                        Chip { label: "load"; clicked => { root.load_preset(); } }
+                    }
 
                     if root.rules.length == 0 : Text {
                         text: "no rules yet";
@@ -664,8 +674,10 @@ export component MainWindow inherits Window {
                             ToolButton { label: "＋ Folders"; width: 92px; clicked => { root.pick_dirs(); } }
                             ToolButton { label: "Clear"; danger: true; width: 64px; clicked => { root.clear_files(); } }
                             Rectangle { horizontal-stretch: 1; }
-                            ToolButton { label: "Save list"; width: 84px; clicked => { root.save_list(); } }
-                            ToolButton { label: "Load list"; width: 84px; clicked => { root.load_list(); } }
+                            ToolButton { label: "Import CSV"; width: 94px; clicked => { root.import_csv(); } }
+                            ToolButton { label: "Export"; width: 68px; clicked => { root.export_preview(); } }
+                            ToolButton { label: "Save list"; width: 80px; clicked => { root.save_list(); } }
+                            ToolButton { label: "Load list"; width: 80px; clicked => { root.load_list(); } }
                         }
                         HorizontalLayout {
                             spacing: 8px;

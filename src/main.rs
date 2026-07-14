@@ -5,6 +5,7 @@ mod batch;
 mod cli;
 mod engine;
 mod gui;
+mod presets;
 mod tags;
 
 fn main() {

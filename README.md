@@ -26,8 +26,14 @@ iron_renamer                 # or the built exe / after cargo install --path .
 - Preview is live — every edit recomputes the table. Conflicts (duplicate targets,
   name already on disk, reserved Windows names, over-long paths) show per-row
   in red and are skipped on rename.
-- **Rename N files** applies the batch; **Undo last batch** reverts it. Batches
-  are recorded in a dated history, so undo works across restarts too.
+- Output modes: rename in place, or **Copy**/**Move** to a tag-expanded
+  destination folder (created automatically). Collision policy: fail,
+  "name (2)", "name_b", or a tag pattern. Save/load the rule stack as a
+  preset (the CLI runs the same files via `--preset`), import a CSV of
+  old/new names, or export the preview as text/CSV/JSON.
+- **Rename N files** applies the batch; **Undo last batch** reverts it
+  (moves included; copies are not undoable). Batches are recorded in a
+  dated history, so undo works across restarts too.
 
 ## CLI
 
@@ -70,6 +76,12 @@ RULES (applied in order given). Every rule flag takes suffix mods, e.g.
 OPTIONS:
   --start <N>                  counter start (default 1)
   --pad <N>                    zero-pad width (default: fits the largest number)
+  --copy-to / --move-to <DEST> copy or move; DEST is a folder template
+                               (tags ok, relative to each file), dirs created
+  --collide <POLICY>           fail | number ("name (2)") | letter ("name_b")
+                               | anything else = tag pattern suffix
+  --preset <FILE|NAME>         load rules/settings from a saved preset
+  --export <FILE>              write the preview (.csv, .json, or text)
   -d, --dirs                   rename folders instead of files
   -x, --apply                  actually rename (otherwise preview only)
 ```
@@ -107,13 +119,14 @@ cargo test
 |------------------|---------------------------------------------|
 | `src/engine.rs`  | Rule engine (rules, shared rule parsing, natural sort, globbing) + tests |
 | `src/tags.rs`    | Tag parser shared by pattern/insert/replacement text + tests |
-| `src/batch.rs`   | Shared planner/executor: validation, chain/swap-safe renaming, dated undo history + tests |
+| `src/batch.rs`   | Shared planner/executor: validation, collision policies, chain/swap-safe rename/copy/move, dated undo history, preview export + tests |
+| `src/presets.rs` | Preset files and CSV/JSON helpers + tests          |
 | `src/cli.rs`     | CLI front-end                                |
 | `src/gui.rs`     | GUI state and callbacks                      |
 | `ui/main.slint`  | All UI markup and styling                    |
 
 ## Not included (on purpose)
 
-Metadata tags (EXIF/ID3), move/copy modes.
+Metadata tags (EXIF/ID3).
 The rule engine is the extension point — a new `Rule` variant in `engine.rs`
 shows up in both front-ends.

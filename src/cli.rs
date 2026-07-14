@@ -4,6 +4,7 @@
 
 use crate::batch::{self, Op};
 use crate::engine::*;
+use crate::presets;
 use std::fs;
 use std::path::PathBuf;
 use std::process::exit;
@@ -59,6 +60,9 @@ OPTIONS:
   --collide <POLICY>           on name collision: fail (default) | number
                                (\"name (2)\") | letter (\"name_b\") | any other
                                value = tag pattern appended to the stem
+  --preset <FILE|NAME>         load rules and settings from a saved preset
+                               (bare names look in the preset folder)
+  --export <FILE>              write the preview to FILE (.csv, .json, or text)
   -d, --dirs                   rename folders instead of files
   -x, --apply                  actually rename (otherwise preview only)
 
@@ -83,6 +87,7 @@ pub fn run(args: Vec<String>) {
     let mut mode = batch::Mode::Rename;
     let mut dest = String::new();
     let mut collision = batch::Collision::Fail;
+    let mut export: Option<PathBuf> = None;
     // Pre-scan so --dirs applies to globs regardless of argument order.
     let dirs = args.iter().any(|a| a == "-d" || a == "--dirs");
 
@@ -163,6 +168,45 @@ pub fn run(args: Vec<String>) {
                     None => die("--if must follow the rule it applies to"),
                 }
             }
+            "--preset" => {
+                let v = need(1, &mut it);
+                let preset = presets::load(&presets::resolve(&v[0])).unwrap_or_else(|e| die(&e));
+                for (kind, mod_str, a, b) in &preset.rules {
+                    let m: Vec<&str> = mod_str.split(':').filter(|x| !x.is_empty()).collect();
+                    match build_rule(kind, &m, a, b) {
+                        Ok((rule, part)) => rules.push(RuleEntry { rule, part, cond: None }),
+                        Err(e) => die(&format!("preset rule: {e}")),
+                    }
+                }
+                let get = |k: &str| preset.settings.get(k).map(String::as_str).unwrap_or("");
+                if let Ok(n) = get("start").parse() {
+                    start = n;
+                }
+                if let Ok(n) = get("pad").parse() {
+                    pad = n;
+                }
+                match get("mode") {
+                    "copy" => mode = batch::Mode::Copy,
+                    "move" => mode = batch::Mode::Move,
+                    _ => {}
+                }
+                if !get("dest").is_empty() {
+                    dest = get("dest").to_string();
+                }
+                collision = match get("collide") {
+                    "number" => batch::Collision::Number,
+                    "letter" => batch::Collision::Letter,
+                    "pattern" => {
+                        let p = get("collide_pattern");
+                        batch::Collision::Pattern(if p.is_empty() { "_<num>".into() } else { p.into() })
+                    }
+                    _ => collision,
+                };
+            }
+            "--export" => {
+                let v = need(1, &mut it);
+                export = Some(PathBuf::from(&v[0]));
+            }
             "--copy-to" => {
                 let v = need(1, &mut it);
                 (mode, dest) = (batch::Mode::Copy, v[0].clone());
@@ -222,6 +266,12 @@ pub fn run(args: Vec<String>) {
     let overrides = std::collections::HashMap::new();
     let cfg = batch::BatchCfg { rules: &rules, start, pad, overrides: &overrides, mode, dest: &dest, collision };
     let items = batch::plan(&files, &cfg);
+    if let Some(path) = &export {
+        match batch::export_preview(&items, path) {
+            Ok(_) => println!("preview exported to {}", path.display()),
+            Err(e) => die(&format!("export failed: {e}")),
+        }
+    }
     let (verb, done) = match mode {
         batch::Mode::Rename => ("rename", "renamed"),
         batch::Mode::Copy => ("copy", "copied"),

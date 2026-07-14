@@ -294,6 +294,155 @@ pub fn run() -> Result<(), slint::PlatformError> {
         );
     });
 
+    // CSV import: column 1 = existing file path, column 2 = manual new name.
+    on!(on_import_csv, |ui, st| {
+        let Some(p) = rfd::FileDialog::new().add_filter("csv", &["csv"]).pick_file() else {
+            return;
+        };
+        let body = match fs::read_to_string(&p) {
+            Ok(b) => b,
+            Err(e) => {
+                ui.set_status_text(format!("import failed: {e}").into());
+                return;
+            }
+        };
+        let mut files = Vec::new();
+        let mut overrides = HashMap::new();
+        let mut skipped = 0;
+        for line in body.lines().filter(|l| !l.trim().is_empty()) {
+            let cols = crate::presets::csv_split(line);
+            let path = PathBuf::from(cols[0].trim());
+            if !path.is_file() {
+                skipped += 1; // also skips a header row
+                continue;
+            }
+            if let Some(new) = cols.get(1).map(|c| c.trim()).filter(|c| !c.is_empty()) {
+                overrides.insert(path.clone(), new.to_string());
+            }
+            files.push(path);
+        }
+        let n = files.len();
+        let mut s = st.borrow_mut();
+        s.files = files;
+        s.overrides = overrides;
+        s.dirs = false;
+        drop(s);
+        ui.set_selected_row(-1);
+        refresh(&ui, &st.borrow());
+        ui.set_status_text(
+            match skipped {
+                0 => format!("imported {n} item(s) from CSV"),
+                _ => format!("imported {n} item(s) from CSV, skipped {skipped} line(s)"),
+            }
+            .into(),
+        );
+    });
+
+    on!(on_export_preview, |ui, st| {
+        if st.borrow().files.is_empty() {
+            ui.set_status_text("nothing to export".into());
+            return;
+        }
+        let Some(p) = rfd::FileDialog::new()
+            .add_filter("csv", &["csv"])
+            .add_filter("json", &["json"])
+            .add_filter("text", &["txt"])
+            .set_file_name("preview.csv")
+            .save_file()
+        else {
+            return;
+        };
+        let items = compute(&ui, &st.borrow()).items;
+        let msg = match batch::export_preview(&items, &p) {
+            Ok(_) => format!("preview exported to {}", p.display()),
+            Err(e) => format!("export failed: {e}"),
+        };
+        ui.set_status_text(msg.into());
+    });
+
+    on!(on_save_preset, |ui, st| {
+        if st.borrow().rules.is_empty() {
+            ui.set_status_text("no rules to save".into());
+            return;
+        }
+        let dir = crate::presets::dir();
+        let _ = fs::create_dir_all(&dir);
+        let Some(p) = rfd::FileDialog::new()
+            .add_filter("preset", &["preset"])
+            .set_directory(&dir)
+            .set_file_name("rules.preset")
+            .save_file()
+        else {
+            return;
+        };
+        let s = st.borrow();
+        let preset = crate::presets::Preset {
+            settings: [
+                ("start".to_string(), ui.get_start_text().to_string()),
+                ("pad".to_string(), ui.get_pad_text().to_string()),
+                ("mode".to_string(), ui.get_batch_mode().to_string()),
+                ("dest".to_string(), ui.get_dest_text().to_string()),
+                ("collide".to_string(), ui.get_collide().to_string()),
+                ("collide_pattern".to_string(), ui.get_collide_pattern().to_string()),
+            ]
+            .into(),
+            rules: s
+                .rules
+                .iter()
+                .map(|r| (r.kind.clone(), r.mods.clone(), r.a.clone(), r.b.clone()))
+                .collect(),
+        };
+        let msg = match crate::presets::save(&p, &preset) {
+            Ok(_) => format!("preset saved to {}", p.display()),
+            Err(e) => format!("preset save failed: {e}"),
+        };
+        drop(s);
+        ui.set_status_text(msg.into());
+    });
+
+    on!(on_load_preset, |ui, st| {
+        let dir = crate::presets::dir();
+        let _ = fs::create_dir_all(&dir);
+        let Some(p) =
+            rfd::FileDialog::new().add_filter("preset", &["preset"]).set_directory(&dir).pick_file()
+        else {
+            return;
+        };
+        match crate::presets::load(&p) {
+            Ok(preset) => {
+                let mut specs = Vec::new();
+                let mut bad = 0;
+                for (kind, mods, a, b) in preset.rules {
+                    let spec = RuleSpec { kind, a, b, mods };
+                    if spec.build().is_ok() {
+                        specs.push(spec);
+                    } else {
+                        bad += 1;
+                    }
+                }
+                let n = specs.len();
+                st.borrow_mut().rules = specs;
+                let get = |k: &str| preset.settings.get(k).cloned().unwrap_or_default();
+                let or = |v: String, d: &str| if v.is_empty() { d.to_string() } else { v };
+                ui.set_start_text(or(get("start"), "1").into());
+                ui.set_pad_text(get("pad").into());
+                ui.set_batch_mode(or(get("mode"), "rename").into());
+                ui.set_dest_text(get("dest").into());
+                ui.set_collide(or(get("collide"), "fail").into());
+                ui.set_collide_pattern(get("collide_pattern").into());
+                refresh(&ui, &st.borrow());
+                ui.set_status_text(
+                    match bad {
+                        0 => format!("loaded {n} rule(s) from preset"),
+                        _ => format!("loaded {n} rule(s) from preset, {bad} invalid"),
+                    }
+                    .into(),
+                );
+            }
+            Err(e) => ui.set_status_text(e.into()),
+        }
+    });
+
     on!(on_remove_selected, |ui, st| {
         let i = ui.get_selected_row();
         let mut s = st.borrow_mut();
@@ -534,7 +683,8 @@ pub fn run() -> Result<(), slint::PlatformError> {
 
 struct Computed {
     rows: Vec<FileRow>,
-    plan: Vec<Op>, // only conflict-free changes
+    items: Vec<batch::PlanItem>, // full preview, for export
+    plan: Vec<Op>,               // only conflict-free changes
     mode: Mode,
     changed: i32,
     errors: i32,
@@ -600,7 +750,7 @@ fn compute(ui: &MainWindow, s: &State) -> Computed {
             state,
         });
     }
-    Computed { rows, plan, mode, changed, errors }
+    Computed { rows, items, plan, mode, changed, errors }
 }
 
 fn refresh(ui: &MainWindow, s: &State) {
