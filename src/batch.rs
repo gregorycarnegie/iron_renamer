@@ -163,6 +163,7 @@ fn lower_abs(p: &Path) -> String {
 /// are valid; collision checks are case-insensitive like NTFS.
 pub fn plan(files: &[PathBuf], cfg: &BatchCfg) -> Vec<PlanItem> {
     crate::engine::reset_js(); // JS rule state never leaks between previews/batches
+    tags::set_total(files.len()); // for the <total> tag
     struct Pre {
         name: String,
         dest_dir: PathBuf,

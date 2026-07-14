@@ -12,12 +12,19 @@
 //             <roman[:START[:STEP]]>  I, II, III...
 //             <dirnum[:START[:STEP]]> resets per parent folder
 //             <index>                 1-based list position
+//             <total>                 number of items in the batch
 // Location    <parent> <path>     folder name / full folder path
-// File        <size[:kb|mb]> <crc32>
-// Dates (UTC) <now|created|modified[:FMT[:OFFSET]]>
+//             <subfolder[:N]>     Nth ancestor folder (1 = parent)
+// File        <size[:kb|mb|gb|tb|h]> ('h' = human text, "1.4 GB")
+//             <crc32> <md5> <sha1>
+// Dates (UTC) <now|created|modified|accessed[:FMT[:OFFSET]]>
 //             FMT tokens yyyy yy MM dd HH mm ss (default yyyy-MM-dd),
+//             or the literal FMT `unix` for epoch seconds,
 //             OFFSET like +3d -12h +30m
 // Random      <rand[:MIN[:MAX]]> <rands[:LEN]>
+// Data        <csv:COL> — column COL (1-based number, or a header name)
+//             of the row matching the item's list position; rows are
+//             loaded by the frontend (--csv / GUI import)
 // Metadata    <exif:TAG> (any ExifTool tag) plus aliases <width> <height>
 //             <lat> <lon> (signed decimal GPS)
 //             <datetaken> <artist> <album> <track> <title> <duration>
@@ -26,7 +33,9 @@
 //             from the file gives "" (so |fallback applies); without
 //             ExifTool the tag is left literal.
 // Modifiers   |upper |lower |title |sub:START[,LEN] |pad:N |trim[:CHARS]
-//             |replace:OLD[,NEW] |fallback:TEXT |+N |-N |*N |/N
+//             |replace:OLD[,NEW] |split:SEP,N (empty SEP = whitespace;
+//             N 1-based, negative from the end) |fallback:TEXT
+//             |+N |-N |*N |/N
 
 use crate::engine::{CaseMode, Ctx, change_case, split_ext};
 use std::{
@@ -97,37 +106,63 @@ fn eval(body: &str, full_name: &str, ctx: &Ctx) -> Option<String> {
                 w = ctx.pad
             )
         }
+        "total" => {
+            let n = TOTAL.get();
+            if n == 0 {
+                return None; // no batch context (e.g. bare expand)
+            }
+            n.to_string()
+        }
         "parent" => abs_parent(ctx)?
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default(),
         "path" => abs_parent(ctx)?.display().to_string(),
+        "subfolder" => {
+            let n: usize = match args.first().copied().unwrap_or("") {
+                "" => 1,
+                s => s.parse().ok().filter(|&n| n >= 1)?,
+            };
+            let mut p = abs_parent(ctx)?;
+            for _ in 1..n {
+                p = p.parent()?.to_path_buf();
+            }
+            p.file_name()
+                .map(|x| x.to_string_lossy().into_owned())
+                .unwrap_or_default()
+        }
         "size" => {
             let bytes = fs::metadata(ctx.path).ok()?.len();
             match args.first().copied().unwrap_or("") {
                 "" | "b" => bytes.to_string(),
-                "kb" => (bytes / 1024).to_string(),
-                "mb" => (bytes / (1024 * 1024)).to_string(),
+                "kb" => (bytes >> 10).to_string(),
+                "mb" => (bytes >> 20).to_string(),
+                "gb" => (bytes >> 30).to_string(),
+                "tb" => (bytes >> 40).to_string(),
+                "h" => human_size(bytes),
                 _ => return None,
             }
         }
-        "crc32" => crc32_cached(ctx)?,
-        "now" | "created" | "modified" => {
+        "crc32" | "md5" | "sha1" => file_hash(ctx, &tag)?,
+        "csv" => {
+            let col = args.first().copied().filter(|c| !c.is_empty())?;
+            csv_cell(col, ctx.index)?
+        }
+        "now" | "created" | "modified" | "accessed" => {
             let t = match tag.as_str() {
                 "now" => SystemTime::now(),
                 "created" => fs::metadata(ctx.path).ok()?.created().ok()?,
+                "accessed" => fs::metadata(ctx.path).ok()?.accessed().ok()?,
                 _ => fs::metadata(ctx.path).ok()?.modified().ok()?,
             };
             let mut secs = t.duration_since(UNIX_EPOCH).ok()?.as_secs() as i64;
             if let Some(off) = args.get(1) {
                 secs += parse_offset(off)?;
             }
-            let fmt = args
-                .first()
-                .filter(|s| !s.is_empty())
-                .copied()
-                .unwrap_or("yyyy-MM-dd");
-            fmt_dt(fmt, secs)
+            match args.first().filter(|s| !s.is_empty()).copied() {
+                Some("unix") => secs.to_string(),
+                fmt => fmt_dt(fmt.unwrap_or("yyyy-MM-dd"), secs),
+            }
         }
         "rand" => {
             let min: i64 = args.first().and_then(|s| s.parse().ok()).unwrap_or(0);
@@ -279,17 +314,75 @@ fn abs_parent(ctx: &Ctx) -> Option<PathBuf> {
         .map(PathBuf::from)
 }
 
-fn crc32_cached(ctx: &Ctx) -> Option<String> {
+fn file_hash(ctx: &Ctx, kind: &str) -> Option<String> {
     thread_local! {
-        static CACHE: RefCell<HashMap<PathBuf, u32>> = RefCell::new(HashMap::new());
+        static CACHE: RefCell<HashMap<(PathBuf, String), String>> = RefCell::new(HashMap::new());
     }
     CACHE.with(|c| {
-        if let Some(&v) = c.borrow().get(ctx.path) {
-            return Some(format!("{v:08x}"));
+        let key = (ctx.path.to_path_buf(), kind.to_string());
+        if let Some(v) = c.borrow().get(&key) {
+            return Some(v.clone());
         }
-        let v = crc32fast::hash(&fs::read(ctx.path).ok()?);
-        c.borrow_mut().insert(ctx.path.to_path_buf(), v);
-        Some(format!("{v:08x}"))
+        let data = fs::read(ctx.path).ok()?;
+        let v = match kind {
+            "md5" => format!("{:x}", md5::compute(&data)),
+            "sha1" => sha1_smol::Sha1::from(&data[..]).digest().to_string(),
+            _ => format!("{:08x}", crc32fast::hash(&data)),
+        };
+        c.borrow_mut().insert(key, v.clone());
+        Some(v)
+    })
+}
+
+fn human_size(b: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
+    let mut v = b as f64;
+    let mut i = 0;
+    while v >= 1024.0 && i < UNITS.len() - 1 {
+        v /= 1024.0;
+        i += 1;
+    }
+    if i == 0 {
+        format!("{b} B")
+    } else {
+        format!("{v:.1} {}", UNITS[i])
+    }
+}
+
+thread_local! {
+    static TOTAL: Cell<usize> = const { Cell::new(0) };
+    static CSV: RefCell<Vec<Vec<String>>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Batch size for `<total>`; set by the planner before expanding rules.
+pub fn set_total(n: usize) {
+    TOTAL.set(n);
+}
+
+/// Rows for `<csv:COL>`; set by the frontend (`--csv FILE` / GUI import).
+pub fn set_csv(rows: Vec<Vec<String>>) {
+    CSV.with(|c| *c.borrow_mut() = rows);
+}
+
+// Numeric COL: 1-based column of row `index`. Header COL: the named column
+// (case-insensitive, row 0 is the header) of row `index + 1`. A missing
+// row/cell gives "" so |fallback applies; no CSV loaded leaves the tag literal.
+fn csv_cell(col: &str, index: usize) -> Option<String> {
+    CSV.with(|c| {
+        let rows = c.borrow();
+        if rows.is_empty() {
+            return None;
+        }
+        let (row, ncol) = match col.parse::<usize>() {
+            Ok(n) if n >= 1 => (index, n - 1),
+            _ => {
+                let n = rows[0].iter().position(|h| h.eq_ignore_ascii_case(col))?;
+                (index + 1, n)
+            }
+        };
+        Some(sanitize(
+            rows.get(row).and_then(|r| r.get(ncol)).map_or("", |s| s),
+        ))
     })
 }
 
@@ -457,6 +550,27 @@ fn modify(val: String, m: &str) -> Option<String> {
             }
             val.replace(old, new)
         }
+        "split" => {
+            // SEP,N — Nth piece (1-based; negative counts from the end);
+            // empty SEP splits on whitespace. Out of range gives "".
+            let (sep, n) = arg.rsplit_once(',')?;
+            let n: i64 = n.parse().ok()?;
+            if n == 0 {
+                return None;
+            }
+            let parts: Vec<&str> = if sep.is_empty() {
+                val.split_whitespace().collect()
+            } else {
+                val.split(sep).collect()
+            };
+            let idx = if n < 0 { parts.len() as i64 + n } else { n - 1 };
+            usize::try_from(idx)
+                .ok()
+                .and_then(|i| parts.get(i))
+                .copied()
+                .unwrap_or("")
+                .to_string()
+        }
         "fallback" => {
             if val.is_empty() {
                 arg.to_string()
@@ -587,6 +701,70 @@ mod tests {
     }
 
     #[test]
+    fn split_modifier() {
+        let path = Path::new("a.txt");
+        let c = ctx(path, "a.txt");
+        assert_eq!(expand("<name|split:-,2>", "a-b-c.jpg", &c), "b");
+        assert_eq!(expand("<name|split:-,-1>", "a-b-c.jpg", &c), "c");
+        // empty SEP = whitespace (AR's <Word:n>)
+        assert_eq!(expand("<name|split:,2>", "one  two three.jpg", &c), "two");
+        // out of range gives "" so |fallback applies
+        assert_eq!(expand("<name|split:-,9|fallback:x>", "a-b.jpg", &c), "x");
+        // N = 0 or missing N leaves the tag literal
+        assert_eq!(expand("<name|split:-,0>", "a-b.jpg", &c), "<name|split:-,0>");
+        assert_eq!(expand("<name|split:->", "a-b.jpg", &c), "<name|split:->");
+    }
+
+    #[test]
+    fn subfolder_and_total_and_dates() {
+        let path = Path::new("C:/photos/2024/trip/img.jpg");
+        let c = ctx(path, "img.jpg");
+        assert_eq!(expand("<subfolder>", "img.jpg", &c), "trip");
+        assert_eq!(expand("<subfolder:2>", "img.jpg", &c), "2024");
+        assert_eq!(expand("<subfolder:3>", "img.jpg", &c), "photos");
+        assert_eq!(expand("<subfolder:0>", "img.jpg", &c), "<subfolder:0>");
+        // <total> is literal until the planner sets it
+        set_total(0);
+        assert_eq!(expand("<total>", "img.jpg", &c), "<total>");
+        set_total(42);
+        assert_eq!(expand("<total>", "img.jpg", &c), "42");
+        set_total(0);
+        // unix format token
+        let secs: i64 = expand("<now:unix>", "img.jpg", &c).parse().unwrap();
+        assert!(secs > 1_700_000_000);
+    }
+
+    #[test]
+    fn csv_tag_by_number_and_header() {
+        let path = Path::new("a.txt");
+        let c = ctx(path, "a.txt"); // index 4
+        // no CSV loaded -> literal
+        set_csv(Vec::new());
+        assert_eq!(expand("<csv:1>", "a.txt", &c), "<csv:1>");
+        let rows: Vec<Vec<String>> = (0..7)
+            .map(|r| vec![format!("r{r}c1"), format!("r{r}c2")])
+            .collect();
+        set_csv(rows);
+        assert_eq!(expand("<csv:2>", "a.txt", &c), "r4c2");
+        // header lookup: row 0 is the header, data rows shift by one
+        let mut rows: Vec<Vec<String>> = vec![vec!["Old".into(), "Title".into()]];
+        rows.extend((0..7).map(|r| vec![format!("o{r}"), format!("t{r}")]));
+        set_csv(rows);
+        assert_eq!(expand("<csv:title>", "a.txt", &c), "t4");
+        // missing column/row gives "" so |fallback applies
+        assert_eq!(expand("<csv:9|fallback:x>", "a.txt", &c), "x");
+        assert_eq!(expand("<csv:nope>", "a.txt", &c), "<csv:nope>");
+        set_csv(Vec::new());
+    }
+
+    #[test]
+    fn human_sizes() {
+        assert_eq!(human_size(512), "512 B");
+        assert_eq!(human_size(1536), "1.5 KB");
+        assert_eq!(human_size(1_500_000_000), "1.4 GB");
+    }
+
+    #[test]
     fn extracts_datetimes_from_text() {
         let (y, m, d, h, mi, s) = civil_utc(extract_datetime("IMG_20240501_123005.jpg").unwrap());
         assert_eq!((y, m, d, h, mi, s), (2024, 5, 1, 12, 30, 5));
@@ -642,8 +820,17 @@ mod tests {
         let c = ctx(&p, "data.bin");
         assert_eq!(expand("<size>", "data.bin", &c), "11");
         assert_eq!(expand("<size:kb>", "data.bin", &c), "0");
-        // CRC32 of "hello world" is a known constant
+        // hashes of "hello world" are known constants
         assert_eq!(expand("<crc32>", "data.bin", &c), "0d4a1185");
+        assert_eq!(
+            expand("<md5>", "data.bin", &c),
+            "5eb63bbbe01eeed093cb22bb8f5acdc3"
+        );
+        assert_eq!(
+            expand("<sha1>", "data.bin", &c),
+            "2aae6c35c94fcfb415dbe95f408b9ce91ee846ed"
+        );
+        assert_eq!(expand("<size:h>", "data.bin", &c), "11 B");
         let modified = expand("<modified>", "data.bin", &c);
         assert_eq!(modified.len(), 10, "yyyy-MM-dd: {modified}");
         let r: i64 = expand("<rand:5:5>", "data.bin", &c).parse().unwrap();

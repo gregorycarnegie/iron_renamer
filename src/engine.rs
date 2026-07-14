@@ -109,7 +109,12 @@ pub enum Rule {
     },
     Swap(String),           // swap around first separator: "a - b" -> "b - a"
     ListNames(Vec<String>), // one explicit new name per list position
-    Js(String),             // sandboxed script; completion value = new name
+    // Many find→replace pairs applied in order (AR's "List Replace").
+    Pairs {
+        pairs: Vec<(String, String)>,
+        ci: bool,
+    },
+    Js(String), // sandboxed script; completion value = new name
 }
 
 pub enum CondField {

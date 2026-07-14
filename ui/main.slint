@@ -161,6 +161,7 @@ export component MainWindow inherits Window {
     in-out property <string> apply_part: "both";
     in-out property <bool> replace_ci: false;
     in-out property <string> replace_occ: "all";
+    in-out property <bool> pairs_ci: false;
     in-out property <string> trim_at: "both";
     in-out property <bool> trim_inv: false;
     in-out property <string> start_text: "1";
@@ -324,23 +325,28 @@ export component MainWindow inherits Window {
                         spacing: 6px;
                         HorizontalLayout {
                             spacing: 6px;
-                            Chip { label: "Replace"; active: root.new_kind == "replace"; clicked => { root.new_kind = "replace"; } }
-                            Chip { label: "Regex";   active: root.new_kind == "regex";   clicked => { root.new_kind = "regex"; } }
+                            Chip { label: "Replace";      active: root.new_kind == "replace"; clicked => { root.new_kind = "replace"; } }
+                            Chip { label: "List Replace"; active: root.new_kind == "pairs";   clicked => { root.new_kind = "pairs"; } }
+                            Chip { label: "Regex";        active: root.new_kind == "regex";   clicked => { root.new_kind = "regex"; } }
+                        }
+                        HorizontalLayout {
+                            spacing: 6px;
                             Chip { label: "Case";    active: root.new_kind == "case";    clicked => { root.new_kind = "case"; } }
                             Chip { label: "Pattern"; active: root.new_kind == "pattern"; clicked => { root.new_kind = "pattern"; } }
+                            Chip { label: "Insert";  active: root.new_kind == "insert";  clicked => { root.new_kind = "insert"; } }
+                            Chip { label: "Remove";  active: root.new_kind == "remove";  clicked => { root.new_kind = "remove"; } }
                         }
                         HorizontalLayout {
                             spacing: 6px;
-                            Chip { label: "Insert";   active: root.new_kind == "insert";   clicked => { root.new_kind = "insert"; } }
-                            Chip { label: "Remove";   active: root.new_kind == "remove";   clicked => { root.new_kind = "remove"; } }
                             Chip { label: "Trim";     active: root.new_kind == "trim";     clicked => { root.new_kind = "trim"; } }
                             Chip { label: "Renumber"; active: root.new_kind == "renumber"; clicked => { root.new_kind = "renumber"; } }
+                            Chip { label: "Move";     active: root.new_kind == "move";     clicked => { root.new_kind = "move"; } }
+                            Chip { label: "Swap";     active: root.new_kind == "swap";     clicked => { root.new_kind = "swap"; } }
                         }
                         HorizontalLayout {
                             spacing: 6px;
-                            Chip { label: "Move";  active: root.new_kind == "move";  clicked => { root.new_kind = "move"; } }
-                            Chip { label: "Swap";  active: root.new_kind == "swap";  clicked => { root.new_kind = "swap"; } }
                             Chip { label: "Names"; active: root.new_kind == "names"; clicked => { root.new_kind = "names"; } }
+                            Chip { label: "JS";    active: root.new_kind == "js";    clicked => { root.new_kind = "js"; } }
                         }
                     }
 
@@ -482,6 +488,41 @@ export component MainWindow inherits Window {
                         }
                         Text {
                             text: "one new name per line, in list order";
+                            color: Palette.faint;
+                            font-size: 10px;
+                            font-family: "Cascadia Mono";
+                        }
+                    }
+
+                    if root.new_kind == "pairs" : VerticalLayout {
+                        spacing: 6px;
+                        TextEdit {
+                            height: 90px;
+                            font-size: 12px;
+                            text <=> root.field_a;
+                        }
+                        HorizontalLayout {
+                            spacing: 6px;
+                            Chip { label: "Aa"; active: root.pairs_ci; clicked => { root.pairs_ci = !root.pairs_ci; } }
+                            Text {
+                                text: "one OLD=NEW per line (tags ok in NEW)";
+                                color: Palette.faint;
+                                font-size: 10px;
+                                font-family: "Cascadia Mono";
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+
+                    if root.new_kind == "js" : VerticalLayout {
+                        spacing: 6px;
+                        TextEdit {
+                            height: 90px;
+                            font-size: 12px;
+                            text <=> root.field_a;
+                        }
+                        Text {
+                            text: "sandboxed script; last expression = new name\nglobals: name ext stem original path index num";
                             color: Palette.faint;
                             font-size: 10px;
                             font-family: "Cascadia Mono";

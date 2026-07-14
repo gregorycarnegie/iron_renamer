@@ -275,6 +275,27 @@ fn list_names_by_index() {
 }
 
 #[test]
+fn pairs_replace_in_order() {
+    // '=' separated, applied top to bottom; tags expand in NEW.
+    let pairs = " =_\nIMG=photo";
+    assert_eq!(
+        run(&entry("pairs", &[], pairs, ""), "img a b.jpg"),
+        "img_a_b.jpg" // case-sensitive by default
+    );
+    assert_eq!(
+        run(&entry("pairs", &["ci"], pairs, ""), "img a b.jpg"),
+        "photo_a_b.jpg"
+    );
+    // tab wins over '=' so either side may contain '='
+    assert_eq!(
+        run(&entry("pairs", &[], "a=b\tx=y", ""), "a=b.txt"),
+        "x=y.txt"
+    );
+    assert!(build_rule("pairs", &[], "no separator here", "").is_err());
+    assert!(build_rule("pairs", &["bogus"], "a=b", "").is_err());
+}
+
+#[test]
 fn conditions_gate_rules() {
     let mut e = entry("case", &[], "upper", "");
     e.cond = Some(build_cond("ext:eq", "jpg").unwrap());

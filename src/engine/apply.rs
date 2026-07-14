@@ -73,6 +73,15 @@ fn apply_rule(rule: &Rule, s: &str, full: &str, ctx: &Ctx) -> String {
             .get(ctx.index)
             .cloned()
             .unwrap_or_else(|| s.to_string()),
+        Rule::Pairs { pairs, ci } => pairs.iter().fold(s.to_string(), |acc, (old, new)| {
+            replace_occ(
+                &acc,
+                old,
+                &tags::expand(new, full, ctx),
+                *ci,
+                &Occurrence::All,
+            )
+        }),
         Rule::Js(src) => eval_js(src, s, full, ctx),
     }
 }

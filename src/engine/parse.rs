@@ -270,6 +270,32 @@ pub fn build_rule(kind: &str, mods: &[&str], a: &str, b: &str) -> Result<(Rule, 
             }
             Rule::ListNames(a.lines().map(|l| l.trim_end().to_string()).collect())
         }
+        "pairs" => {
+            let mut ci = false;
+            for m in &rest {
+                match *m {
+                    "ci" => ci = true,
+                    m => return Err(unknown(m)),
+                }
+            }
+            // One pair per line: OLD=NEW (tab wins over '=' so either side
+            // may contain '='). Blank lines and empty OLD are skipped.
+            let pairs: Vec<(String, String)> = a
+                .lines()
+                .filter_map(|l| {
+                    let l = l.trim_end();
+                    let (old, new) = match l.split_once('\t') {
+                        Some(p) => p,
+                        None => l.split_once('=')?,
+                    };
+                    (!old.is_empty()).then(|| (old.to_string(), new.to_string()))
+                })
+                .collect();
+            if pairs.is_empty() {
+                return Err("pairs needs OLD=NEW lines".into());
+            }
+            Rule::Pairs { pairs, ci }
+        }
         "js" => {
             if let Some(m) = rest.first() {
                 return Err(unknown(m));

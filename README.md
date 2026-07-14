@@ -4,7 +4,7 @@
 [![Slint 1.17](https://img.shields.io/badge/GUI-Slint_1.17-2379f4)](https://slint.dev/)
 ![CLI and GUI](https://img.shields.io/badge/interfaces-CLI_%2B_GUI-555)
 
-Batch file renamer in Rust — a personal, minimal take on [Advanced Renamer](https://www.advancedrenamer.com/).
+Batch file renamer in Rust.
 One binary, two faces: run with no arguments for the GUI (Slint), with arguments for the CLI.
 
 ## GUI
@@ -63,21 +63,28 @@ RULES (applied in order given). Every rule flag takes suffix mods, e.g.
       --move <PAT> <POS>       move first match (re:PAT for regex) to POS
       --swap <SEP>             swap around first separator: 'a - b' -> 'b - a'
       --names <FILE>           one new name per line, matched to list order
+      --replace-list <FILE>    OLD=NEW pairs, one per line, applied in order;
+                               mod: ci (tab also splits, so OLD may hold '=')
+      --js <SCRIPT|FILE>       sandboxed JavaScript; last expression = new name
       --if <COND> <VALUE>      condition on the previous rule:
                                [not:]<name|new|ext|path>:<has|starts|ends|eq|re>
 
   POS:  start | end | N | -N | before:TEXT | after:TEXT | rbefore:PAT | rafter:PAT
   TAGS: <tag[:args][|modifier]...> in pattern/insert/replacement text
-        <name> <ext> <oname> <oext> <index> <parent> <path>
-        <size[:kb|mb]> <crc32> <rand[:MIN[:MAX]]> <rands[:LEN]>
+        <name> <ext> <oname> <oext> <index> <total> <parent> <path>
+        <subfolder[:N]> (Nth ancestor folder, 1 = parent)
+        <size[:kb|mb|gb|tb|h]> ('h' = "1.4 GB") <crc32> <md5> <sha1>
+        <rand[:MIN[:MAX]]> <rands[:LEN]> <csv:COL> (see --csv)
         counters (:START:STEP): <num> <hex> <alpha> <roman> <dirnum>
-        dates (UTC): <now|created|modified[:FMT[:OFFSET]]>
-          FMT tokens yyyy yy MM dd HH mm ss · OFFSET like +3d -12h
+        dates (UTC): <now|created|modified|accessed[:FMT[:OFFSET]]>
+          FMT tokens yyyy yy MM dd HH mm ss, or the literal FMT unix
+          for epoch seconds · OFFSET like +3d -12h
         metadata (needs ExifTool on PATH or IRON_RENAMER_EXIFTOOL):
           <exif:TAG> plus <width> <height> <datetaken> <artist> <album>
-          <track> <title> <duration> <author>
+          <track> <title> <duration> <author> <lat> <lon>
   MODS: |upper |lower |title |sub:START[,LEN] |pad:N |trim[:CHARS]
-        |replace:OLD[,NEW] |fallback:TEXT |+N |-N |*N |/N
+        |replace:OLD[,NEW] |split:SEP,N (empty SEP = whitespace, N<0
+        from the end) |fallback:TEXT |+N |-N |*N |/N
 
 OPTIONS:
   --start <N>                  counter start (default 1)
@@ -91,10 +98,15 @@ OPTIONS:
                                result log (.csv, .json, or text)
   --in <DIR> [--recurse]       take files from DIR; --mask "*.jpg;!*thumb*"
   --list <FILE>                take files from a list (keeps its order)
+  --csv <FILE>                 rows for the <csv:COL> tag; COL is a 1-based
+                               column number (row = list position) or a
+                               header name (row 0 = headers)
   --sort <name|ext|size|date|none> [--desc]
   --pairs                      same-stem sidecars share the generated stem
   --touch <WHICH=VALUE>        set created|modified|accessed|all timestamps:
                                "2024-05-01 10:30" | +3d | name | parent | exif
+  --set-meta <TAG=VALUE>       write a metadata tag after the batch
+                               (needs ExifTool; repeatable)
   -d, --dirs                   rename folders instead of files
   -x, --apply                  actually rename (otherwise preview only)
 ```
@@ -140,6 +152,7 @@ cargo test
 
 ## Not included (on purpose)
 
-Metadata tags (EXIF/ID3).
+GPS reverse geocoding (city/country names need an online database — `<lat>`,
+`<lon>`, and `<exif:TAG>` cover the offline part).
 The rule engine is the extension point — a new `Rule` variant in `engine.rs`
 shows up in both front-ends.

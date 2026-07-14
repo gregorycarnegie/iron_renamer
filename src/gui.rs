@@ -45,6 +45,8 @@ impl RuleSpec {
             "renumber" => format!("#{} {}", self.a, self.b),
             "swap" => format!("around \"{}\"", self.a),
             "names" => format!("{} name(s)", self.a.lines().count()),
+            "pairs" => format!("{} pair(s)", self.a.lines().count()),
+            "js" => format!("script · {} line(s)", self.a.lines().count()),
             "trim" if self.a.is_empty() => "whitespace".into(),
             _ => self.a.clone(),
         };
@@ -531,6 +533,7 @@ pub fn run(initial: Vec<PathBuf>) -> Result<(), slint::PlatformError> {
                     mods.push("inv".into());
                 }
             }
+            "pairs" if ui.get_pairs_ci() => mods.push("ci".into()),
             _ => {}
         }
         let spec = RuleSpec {
@@ -821,7 +824,12 @@ fn refresh(ui: &MainWindow, s: &State) {
         .rules
         .iter()
         .map(|r| RuleRow {
-            kind: r.kind.to_uppercase().into(),
+            // engine kind "pairs" wears its AR-familiar name in the UI
+            kind: if r.kind == "pairs" {
+                "LIST REPLACE".into()
+            } else {
+                r.kind.to_uppercase().into()
+            },
             summary: r.summary().into(),
         })
         .collect();

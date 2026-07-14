@@ -9,6 +9,9 @@ edition = "2024"
 boa_engine = "0.20"
 clap = { version = "4.6.1", features = ["derive"] }
 crc32fast = "1.5.0"
+# Zero-dependency hash tags <md5> and <sha1>.
+md5 = "0.8.1"
+sha1_smol = "1.0.1"
 regex = "1.13.0"
 slint = { version = "1.17.1", default-features = false, features = ["accessibility", "compat-1-2", "renderer-femtovg", "std", "unstable-winit-030"] } # winit feature: OS file drag-and-drop
 rfd = "0.17.2"

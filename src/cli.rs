@@ -17,12 +17,15 @@ RULES are applied in order given. Every rule flag takes suffix mods, e.g.
 
   POS:  start | end | N | -N | before:TEXT | after:TEXT | rbefore:PAT | rafter:PAT
   TAGS (in pattern/insert/replacement text; <tag[:args][|mod]...>):
-        <name> <ext> <oname> <oext> <index> <parent> <path> <size[:kb|mb]>
-        <crc32> <rand[:MIN[:MAX]]> <rands[:LEN]>
+        <name> <ext> <oname> <oext> <index> <total> <parent> <path>
+        <subfolder[:N]> (Nth ancestor folder, 1 = parent)
+        <size[:kb|mb|gb|tb|h]> ('h' = \"1.4 GB\") <crc32> <md5> <sha1>
+        <rand[:MIN[:MAX]]> <rands[:LEN]> <csv:COL> (see --csv)
         counters, all take :START:STEP -- <num> <hex> <alpha> <roman>
         <dirnum> (resets per folder)
-        dates (UTC) -- <now|created|modified[:FMT[:OFFSET]]>, FMT tokens
-        yyyy yy MM dd HH mm ss, OFFSET like +3d -12h
+        dates (UTC) -- <now|created|modified|accessed[:FMT[:OFFSET]]>,
+        FMT tokens yyyy yy MM dd HH mm ss or the literal FMT unix,
+        OFFSET like +3d -12h
         metadata (needs ExifTool on PATH or IRON_RENAMER_EXIFTOOL) --
         <exif:TAG> plus <width> <height> <datetaken> <artist> <album>
         <track> <title> <duration> <author> <lat> <lon>
@@ -30,7 +33,8 @@ RULES are applied in order given. Every rule flag takes suffix mods, e.g.
         globals name ext stem original path index num; the script's last
         expression becomes the new name; globals persist across the batch
   MODS: |upper |lower |title |sub:START[,LEN] |pad:N |trim[:CHARS]
-        |replace:OLD[,NEW] |fallback:TEXT |+N |-N |*N |/N
+        |replace:OLD[,NEW] |split:SEP,N (empty SEP = whitespace, N<0 from
+        the end) |fallback:TEXT |+N |-N |*N |/N
 
 EXAMPLES:
   iron_renamer -r \" \" \"_\" *.mp3
@@ -89,6 +93,12 @@ struct Cli {
     swap: Vec<String>,
     #[arg(long, value_name = "FILE", help = "Use one new name per line")]
     names: Vec<String>,
+    #[arg(
+        long = "replace-list",
+        value_name = "FILE",
+        help = "Apply OLD=NEW pairs from a file, one per line (mods: ci)"
+    )]
+    replace_list: Vec<String>,
     #[arg(
         long,
         value_name = "SCRIPT|FILE",
@@ -155,6 +165,12 @@ struct Cli {
         help = "Take paths from a file, one per line"
     )]
     list: Option<PathBuf>,
+    #[arg(
+        long,
+        value_name = "FILE",
+        help = "Load CSV rows for the <csv:COL> tag (row = list position)"
+    )]
+    csv: Option<PathBuf>,
     #[arg(long, value_parser = ["name", "ext", "size", "date", "none"], help = "Sort order")]
     sort: Option<String>,
     #[arg(long, help = "Reverse the sort order")]
@@ -258,9 +274,9 @@ pub fn run(args: Vec<String>) {
                 mut values,
                 ..
             } => {
-                if kind == "names" {
+                if kind == "names" || kind == "pairs" {
                     values[0] = fs::read_to_string(&values[0]).unwrap_or_else(|e| {
-                        die(&format!("cannot read names file '{}': {e}", values[0]))
+                        die(&format!("cannot read {kind} file '{}': {e}", values[0]))
                     });
                 }
                 // --js takes inline script text or a path to a script file.
@@ -424,6 +440,12 @@ pub fn run(args: Vec<String>) {
         pad = (start + files.len() - 1).to_string().len();
     }
 
+    if let Some(path) = &cli.csv {
+        let body = fs::read_to_string(path)
+            .unwrap_or_else(|e| die(&format!("cannot read csv '{}': {e}", path.display())));
+        crate::tags::set_csv(body.lines().map(presets::csv_split).collect());
+    }
+
     let overrides = std::collections::HashMap::new();
     let cfg = batch::BatchCfg {
         rules: &rules,
@@ -579,6 +601,7 @@ fn rule_id(flag: &str) -> Option<&'static str> {
         "--move" => "move_rule",
         "--swap" => "swap",
         "--names" => "names",
+        "--replace-list" => "replace_list",
         "--js" => "js",
         _ => return None,
     })
@@ -606,6 +629,7 @@ fn rule_events(
     add!("move_rule", "move", 2, &cli.move_rule);
     add!("swap", "swap", 1, &cli.swap);
     add!("names", "names", 1, &cli.names);
+    add!("replace_list", "pairs", 1, &cli.replace_list);
     add!("js", "js", 1, &cli.js);
 
     let positions: Vec<usize> = matches
