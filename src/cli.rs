@@ -7,37 +7,13 @@ use crate::{
     engine::*,
     presets,
 };
-use std::{fs, path::PathBuf, process::exit};
+use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
+use std::{collections::HashMap, fs, path::PathBuf, process::exit};
 
-const USAGE: &str = "\
-iron_renamer — batch file renamer (run with no arguments for the GUI)
-
-USAGE:
-  iron_renamer [RULES] [OPTIONS] <files or globs>...
-  iron_renamer history         list applied batches
-  iron_renamer undo [ID]       revert a batch (the latest if no ID)
-
-RULES (applied in order given). Every rule flag takes suffix mods, e.g.
+const LONG_HELP: &str = "\
+RULES are applied in order given. Every rule flag takes suffix mods, e.g.
 -r:ci:first — ':name' or ':ext' limits a rule to the stem or the extension
 (default: the whole name).
-
-  -r, --replace <OLD> <NEW>    literal replace; mods: ci (ignore case),
-                               first | last | n<N> (occurrence; default all)
-  -e, --regex <PAT> <REPL>     regex replace ($1, $2 for groups)
-  -c, --case <MODE>            lower | upper | title | first | invert
-  -p, --pattern <PAT>          rebuild the name from a tag template
-  -i, --insert <TEXT> <POS>    insert text (tags ok) at POS
-      --remove <WHAT>          TEXT | re:PAT | pos:START,LEN | chars:LIST |
-                               digits | upper | lower | diacritics
-  -t, --trim <CHARS>           trim chars ('' = whitespace); mods: start |
-                               end | both (default) | all, inv (inverse set)
-      --renumber <NTH> <SPEC>  change the NTH number: +N | -N (shift) or
-                               START[/STEP] (resequence); mod: pad<N>
-      --move <PAT> <POS>       move first match (re:PAT for regex) to POS
-      --swap <SEP>             swap around first separator: 'a - b' -> 'b - a'
-      --names <FILE>           one new name per line, matched to list order
-      --if <COND> <VALUE>      condition on the previous rule:
-                               [not:]<name|new|ext|path>:<has|starts|ends|eq|re>
 
   POS:  start | end | N | -N | before:TEXT | after:TEXT | rbefore:PAT | rafter:PAT
   TAGS (in pattern/insert/replacement text; <tag[:args][|mod]...>):
@@ -53,158 +29,228 @@ RULES (applied in order given). Every rule flag takes suffix mods, e.g.
   MODS: |upper |lower |title |sub:START[,LEN] |pad:N |trim[:CHARS]
         |replace:OLD[,NEW] |fallback:TEXT |+N |-N |*N |/N
 
-OPTIONS:
-  --start <N>                  counter start (default 1)
-  --pad <N>                    zero-pad width (default: fits the largest number)
-  --copy-to <DEST>             copy instead of renaming; DEST is a folder
-                               template (tags ok, e.g. \"sorted\\<ext>\"),
-                               relative to each file; dirs are created
-  --move-to <DEST>             move instead of renaming (same DEST rules)
-  --collide <POLICY>           on name collision: fail (default) | number
-                               (\"name (2)\") | letter (\"name_b\") | any other
-                               value = tag pattern appended to the stem
-  --preset <FILE|NAME>         load rules and settings from a saved preset
-                               (bare names look in the preset folder)
-  --export <FILE>              write the preview — or, with --apply, the
-                               results — to FILE (.csv, .json, or text)
-  --in <DIR>                   take files from DIR (repeatable)
-  --recurse                    make --in recursive
-  --mask <MASKS>               filter --in files: \"*.jpg;*.png;!*thumb*\"
-  --list <FILE>                take files from a list, one path per line
-                               (keeps list order unless --sort is given)
-  --sort <name|ext|size|date|none>   sort order (default: natural by name)
-  --desc                       reverse the sort order
-  --pairs                      file-pair mode: same-stem sidecars (img1.jpg +
-                               img1.xmp) take the same new stem
-  --touch <WHICH=VALUE>        set timestamps after the batch; WHICH: comma
-                               list of created|modified|accessed or all;
-                               VALUE: \"2024-05-01 10:30\" | +3d | -2h |
-                               name | parent | exif (dates are UTC)
-  -d, --dirs                   rename folders instead of files
-  -x, --apply                  actually rename (otherwise preview only)
-
 EXAMPLES:
   iron_renamer -r \" \" \"_\" *.mp3
   iron_renamer -c:ext lower -p \"photo_<num>.<ext>\" --pad 3 *.jpg -x
   iron_renamer -i:name \"<parent>_\" start --if ext:eq jpg *.* -x
   iron_renamer --renumber 1 +100 --remove:name \" copy\" *.mkv";
 
+#[derive(Parser)]
+#[command(
+    version,
+    about = "Batch file renamer (run with no arguments for the GUI)",
+    after_long_help = LONG_HELP
+)]
+struct Cli {
+    #[command(subcommand)]
+    command: Option<CliCommand>,
+
+    #[arg(short = 'r', long, num_args = 2, value_names = ["OLD", "NEW"], help = "Literal replace (mods: ci, first, last, n<N>)")]
+    replace: Vec<String>,
+    #[arg(short = 'e', long, num_args = 2, value_names = ["PAT", "REPL"], help = "Regex replace ($1, $2 for groups)")]
+    regex: Vec<String>,
+    #[arg(
+        short = 'c',
+        long = "case",
+        value_name = "MODE",
+        help = "Change case: lower, upper, title, first, or invert"
+    )]
+    case_rule: Vec<String>,
+    #[arg(
+        short = 'p',
+        long,
+        value_name = "PAT",
+        help = "Rebuild the name from a tag template"
+    )]
+    pattern: Vec<String>,
+    #[arg(short = 'i', long, num_args = 2, value_names = ["TEXT", "POS"], help = "Insert text (tags allowed) at a position")]
+    insert: Vec<String>,
+    #[arg(
+        long,
+        value_name = "WHAT",
+        help = "Remove text, regex, position, character class, or diacritics"
+    )]
+    remove: Vec<String>,
+    #[arg(
+        short = 't',
+        long,
+        value_name = "CHARS",
+        help = "Trim characters (mods: start, end, both, all, inv)"
+    )]
+    trim: Vec<String>,
+    #[arg(long, num_args = 2, value_names = ["NTH", "SPEC"], allow_hyphen_values = true, help = "Shift or resequence the Nth number")]
+    renumber: Vec<String>,
+    #[arg(long = "move", num_args = 2, value_names = ["PAT", "POS"], help = "Move the first match to a position")]
+    move_rule: Vec<String>,
+    #[arg(long, value_name = "SEP", help = "Swap around the first separator")]
+    swap: Vec<String>,
+    #[arg(long, value_name = "FILE", help = "Use one new name per line")]
+    names: Vec<String>,
+    #[arg(long = "if", num_args = 2, value_names = ["COND", "VALUE"], help = "Condition the previous rule")]
+    conditions: Vec<String>,
+    #[arg(
+        long,
+        value_name = "FILE|NAME",
+        help = "Load rules and settings from a preset"
+    )]
+    preset: Vec<String>,
+
+    #[arg(long, value_name = "N", help = "Counter start (default: 1)")]
+    start: Option<usize>,
+    #[arg(long, value_name = "N", help = "Zero-pad width (default: automatic)")]
+    pad: Option<usize>,
+    #[arg(
+        long,
+        value_name = "DEST",
+        conflicts_with = "move_to",
+        help = "Copy into a destination folder template"
+    )]
+    copy_to: Option<String>,
+    #[arg(
+        long,
+        value_name = "DEST",
+        conflicts_with = "copy_to",
+        help = "Move into a destination folder template"
+    )]
+    move_to: Option<String>,
+    #[arg(
+        long,
+        value_name = "POLICY",
+        help = "Collision policy: fail, number, letter, or a tag pattern"
+    )]
+    collide: Option<String>,
+    #[arg(
+        long,
+        value_name = "FILE",
+        help = "Export the preview or applied results"
+    )]
+    export: Option<PathBuf>,
+    #[arg(
+        long = "in",
+        value_name = "DIR",
+        help = "Take files from a directory (repeatable)"
+    )]
+    in_dirs: Vec<PathBuf>,
+    #[arg(long, help = "Recurse into --in directories")]
+    recurse: bool,
+    #[arg(
+        long,
+        default_value = "",
+        value_name = "MASKS",
+        help = "Filter --in files, e.g. *.jpg;!*thumb*"
+    )]
+    mask: String,
+    #[arg(
+        long,
+        value_name = "FILE",
+        help = "Take paths from a file, one per line"
+    )]
+    list: Option<PathBuf>,
+    #[arg(long, value_parser = ["name", "ext", "size", "date", "none"], help = "Sort order")]
+    sort: Option<String>,
+    #[arg(long, help = "Reverse the sort order")]
+    desc: bool,
+    #[arg(long, help = "Give same-stem sidecars the same new stem")]
+    pairs: bool,
+    #[arg(
+        long,
+        value_name = "WHICH=VALUE",
+        allow_hyphen_values = true,
+        help = "Set timestamps after the batch"
+    )]
+    touch: Option<String>,
+    #[arg(short = 'd', long, help = "Rename folders instead of files")]
+    dirs: bool,
+    #[arg(short = 'x', long, help = "Apply changes (default: preview)")]
+    apply: bool,
+    #[arg(value_name = "FILE_OR_GLOB")]
+    files: Vec<String>,
+}
+
+#[derive(Subcommand)]
+enum CliCommand {
+    /// List applied batches.
+    History,
+    /// Revert a batch (the latest if no ID is given).
+    Undo { id: Option<u64> },
+}
+
+enum RuleEvent {
+    Rule {
+        pos: usize,
+        kind: &'static str,
+        mods: Vec<String>,
+        values: Vec<String>,
+    },
+    Condition {
+        pos: usize,
+        values: Vec<String>,
+    },
+    Preset {
+        pos: usize,
+        name: String,
+    },
+}
+
+impl RuleEvent {
+    fn pos(&self) -> usize {
+        match self {
+            Self::Rule { pos, .. } | Self::Condition { pos, .. } | Self::Preset { pos, .. } => *pos,
+        }
+    }
+}
+
 pub fn run(args: Vec<String>) {
-    match args[0].as_str() {
-        "undo" => return undo(args.get(1)),
-        "history" => return history(),
-        _ => {}
+    let (normalized, mods) = normalize_rule_flags(&args);
+    let matches = Cli::command().get_matches_from(normalized);
+    let cli = Cli::from_arg_matches(&matches).expect("clap matches its own schema");
+    match cli.command {
+        Some(CliCommand::Undo { id }) => return undo(id),
+        Some(CliCommand::History) => return history(),
+        None => {}
     }
 
     let mut rules: Vec<RuleEntry> = Vec::new();
-    let mut files: Vec<PathBuf> = Vec::new();
-    let mut apply = false;
     let mut start: usize = 1;
     let mut pad: usize = 0;
     let mut mode = batch::Mode::Rename;
     let mut dest = String::new();
     let mut collision = batch::Collision::Fail;
-    let mut export: Option<PathBuf> = None;
-    let mut sort: Option<String> = None;
-    let mut desc = false;
     let mut from_list = false;
-    let mut pairs = false;
-    let mut touch: Option<batch::TouchSpec> = None;
-    // Pre-scan flags that must apply regardless of argument order.
-    let dirs = args.iter().any(|a| a == "-d" || a == "--dirs");
-    let recurse = args.iter().any(|a| a == "--recurse");
-    let masks = Masks::parse(
-        args.iter()
-            .position(|a| a == "--mask")
-            .and_then(|i| args.get(i + 1))
-            .map(String::as_str)
-            .unwrap_or(""),
-    );
-
-    let mut it = args.into_iter();
-    while let Some(a) = it.next() {
-        let need = |n: usize, it: &mut dyn Iterator<Item = String>| -> Vec<String> {
-            let v: Vec<String> = it.take(n).collect();
-            if v.len() < n {
-                die(&format!("'{a}' needs {n} argument(s)"));
+    let mut events = rule_events(&cli, &matches, &mods);
+    events.sort_by_key(RuleEvent::pos);
+    for event in events {
+        match event {
+            RuleEvent::Rule {
+                kind,
+                mods,
+                mut values,
+                ..
+            } => {
+                if kind == "names" {
+                    values[0] = fs::read_to_string(&values[0]).unwrap_or_else(|e| {
+                        die(&format!("cannot read names file '{}': {e}", values[0]))
+                    });
+                }
+                let mods: Vec<&str> = mods.iter().map(String::as_str).collect();
+                let b = values.get(1).map(String::as_str).unwrap_or("");
+                let (rule, part) =
+                    build_rule(kind, &mods, &values[0], b).unwrap_or_else(|e| die(&e));
+                rules.push(RuleEntry {
+                    rule,
+                    part,
+                    cond: None,
+                });
             }
-            v
-        };
-        // Rule flags carry suffix mods: -r:ci:first, --case:ext, ...
-        let (flag, mod_str) = a.split_once(':').unwrap_or((a.as_str(), ""));
-        let mods: Vec<&str> = mod_str.split(':').filter(|m| !m.is_empty()).collect();
-        let mut rule = |kind: &str, a: &str, b: &str| match build_rule(kind, &mods, a, b) {
-            Ok((rule, part)) => rules.push(RuleEntry {
-                rule,
-                part,
-                cond: None,
-            }),
-            Err(e) => die(&e),
-        };
-        match flag {
-            "-h" | "--help" => {
-                println!("{USAGE}");
-                return;
-            }
-            "-x" | "--apply" => apply = true,
-            "-d" | "--dirs" => {}
-            "-r" | "--replace" => {
-                let v = need(2, &mut it);
-                rule("replace", &v[0], &v[1]);
-            }
-            "-e" | "--regex" => {
-                let v = need(2, &mut it);
-                rule("regex", &v[0], &v[1]);
-            }
-            "-c" | "--case" => {
-                let v = need(1, &mut it);
-                rule("case", &v[0], "");
-            }
-            "-p" | "--pattern" => {
-                let v = need(1, &mut it);
-                rule("pattern", &v[0], "");
-            }
-            "-i" | "--insert" => {
-                let v = need(2, &mut it);
-                rule("insert", &v[0], &v[1]);
-            }
-            "--remove" => {
-                let v = need(1, &mut it);
-                rule("remove", &v[0], "");
-            }
-            "-t" | "--trim" => {
-                let v = need(1, &mut it);
-                rule("trim", &v[0], "");
-            }
-            "--renumber" => {
-                let v = need(2, &mut it);
-                rule("renumber", &v[0], &v[1]);
-            }
-            "--move" => {
-                let v = need(2, &mut it);
-                rule("move", &v[0], &v[1]);
-            }
-            "--swap" => {
-                let v = need(1, &mut it);
-                rule("swap", &v[0], "");
-            }
-            "--names" => {
-                let v = need(1, &mut it);
-                let list = fs::read_to_string(&v[0])
-                    .unwrap_or_else(|e| die(&format!("cannot read names file '{}': {e}", v[0])));
-                rule("names", &list, "");
-            }
-            "--if" => {
-                let v = need(2, &mut it);
-                let cond = build_cond(&v[0], &v[1]).unwrap_or_else(|e| die(&e));
+            RuleEvent::Condition { values, .. } => {
+                let cond = build_cond(&values[0], &values[1]).unwrap_or_else(|e| die(&e));
                 match rules.last_mut() {
                     Some(entry) => entry.cond = Some(cond),
                     None => die("--if must follow the rule it applies to"),
                 }
             }
-            "--preset" => {
-                let v = need(1, &mut it);
-                let preset = presets::load(&presets::resolve(&v[0])).unwrap_or_else(|e| die(&e));
+            RuleEvent::Preset { name, .. } => {
+                let preset = presets::load(&presets::resolve(&name)).unwrap_or_else(|e| die(&e));
                 for (kind, mod_str, a, b) in &preset.rules {
                     let m: Vec<&str> = mod_str.split(':').filter(|x| !x.is_empty()).collect();
                     match build_rule(kind, &m, a, b) {
@@ -245,79 +291,60 @@ pub fn run(args: Vec<String>) {
                     _ => collision,
                 };
             }
-            "--export" => {
-                let v = need(1, &mut it);
-                export = Some(PathBuf::from(&v[0]));
-            }
-            "--in" => {
-                let v = need(1, &mut it);
-                let dir = PathBuf::from(&v[0]);
-                if !dir.is_dir() {
-                    die(&format!("--in: '{}' is not a folder", v[0]));
-                }
-                collect_dir(&dir, recurse, &masks, &mut files);
-            }
-            "--recurse" => {}
-            "--mask" => {
-                need(1, &mut it); // consumed in the pre-scan
-            }
-            "--list" => {
-                let v = need(1, &mut it);
-                let body = fs::read_to_string(&v[0])
-                    .unwrap_or_else(|e| die(&format!("cannot read list '{}': {e}", v[0])));
-                for line in body.lines().map(str::trim).filter(|l| !l.is_empty()) {
-                    let p = PathBuf::from(line);
-                    if p.exists() {
-                        files.push(p);
-                    } else {
-                        eprintln!("warning: '{line}' not found, skipped");
-                    }
-                }
-                from_list = true;
-            }
-            "--sort" => {
-                let v = need(1, &mut it);
-                if !matches!(v[0].as_str(), "name" | "ext" | "size" | "date" | "none") {
-                    die("--sort takes name|ext|size|date|none");
-                }
-                sort = Some(v[0].clone());
-            }
-            "--desc" => desc = true,
-            "--pairs" => pairs = true,
-            "--touch" => {
-                let v = need(1, &mut it);
-                touch = Some(batch::parse_touch(&v[0]).unwrap_or_else(|e| die(&e)));
-            }
-            "--copy-to" => {
-                let v = need(1, &mut it);
-                (mode, dest) = (batch::Mode::Copy, v[0].clone());
-            }
-            "--move-to" => {
-                let v = need(1, &mut it);
-                (mode, dest) = (batch::Mode::Move, v[0].clone());
-            }
-            "--collide" => {
-                let v = need(1, &mut it);
-                collision = match v[0].as_str() {
-                    "fail" => batch::Collision::Fail,
-                    "number" => batch::Collision::Number,
-                    "letter" => batch::Collision::Letter,
-                    pat => batch::Collision::Pattern(pat.to_string()),
-                };
-            }
-            "--start" => {
-                let v = need(1, &mut it);
-                start = v[0]
-                    .parse()
-                    .unwrap_or_else(|_| die("--start needs a number"));
-            }
-            "--pad" => {
-                let v = need(1, &mut it);
-                pad = v[0].parse().unwrap_or_else(|_| die("--pad needs a number"));
-            }
-            _ => files.extend(expand(&a, dirs)),
         }
     }
+
+    start = cli.start.unwrap_or(start);
+    pad = cli.pad.unwrap_or(pad);
+    if let Some(path) = cli.copy_to {
+        (mode, dest) = (batch::Mode::Copy, path);
+    } else if let Some(path) = cli.move_to {
+        (mode, dest) = (batch::Mode::Move, path);
+    }
+    if let Some(policy) = cli.collide {
+        collision = match policy.as_str() {
+            "fail" => batch::Collision::Fail,
+            "number" => batch::Collision::Number,
+            "letter" => batch::Collision::Letter,
+            pattern => batch::Collision::Pattern(pattern.to_string()),
+        };
+    }
+    let touch = cli
+        .touch
+        .as_deref()
+        .map(|value| batch::parse_touch(value).unwrap_or_else(|e| die(&e)));
+    let masks = Masks::parse(&cli.mask);
+    let mut files: Vec<PathBuf> = cli
+        .files
+        .iter()
+        .flat_map(|path| expand(path, cli.dirs))
+        .collect();
+    for dir in &cli.in_dirs {
+        if !dir.is_dir() {
+            die(&format!("--in: '{}' is not a folder", dir.display()));
+        }
+        collect_dir(dir, cli.recurse, &masks, &mut files);
+    }
+    if let Some(path) = &cli.list {
+        let body = fs::read_to_string(path)
+            .unwrap_or_else(|e| die(&format!("cannot read list '{}': {e}", path.display())));
+        for line in body.lines().map(str::trim).filter(|line| !line.is_empty()) {
+            let path = PathBuf::from(line);
+            if path.exists() {
+                files.push(path);
+            } else {
+                eprintln!("warning: '{line}' not found, skipped");
+            }
+        }
+        from_list = true;
+    }
+
+    let apply = cli.apply;
+    let dirs = cli.dirs;
+    let export = cli.export;
+    let sort = cli.sort;
+    let desc = cli.desc;
+    let pairs = cli.pairs;
 
     if rules.is_empty() && dest.is_empty() && touch.is_none() {
         die("no rules given (see --help)");
@@ -493,11 +520,117 @@ pub fn run(args: Vec<String>) {
     }
 }
 
-fn undo(id_arg: Option<&String>) {
-    let id = id_arg.map(|s| {
-        s.parse()
-            .unwrap_or_else(|_| die("undo ID must be a number (see 'iron_renamer history')"))
-    });
+fn normalize_rule_flags(args: &[String]) -> (Vec<String>, HashMap<String, Vec<Vec<String>>>) {
+    let mut normalized = vec!["iron_renamer".to_string()];
+    let mut modifiers: HashMap<String, Vec<Vec<String>>> = HashMap::new();
+    for arg in args {
+        let (flag, suffix) = arg.split_once(':').unwrap_or((arg, ""));
+        if let Some(id) = rule_id(flag) {
+            normalized.push(flag.to_string());
+            modifiers.entry(id.to_string()).or_default().push(
+                suffix
+                    .split(':')
+                    .filter(|part| !part.is_empty())
+                    .map(str::to_string)
+                    .collect(),
+            );
+        } else {
+            normalized.push(arg.clone());
+        }
+    }
+    (normalized, modifiers)
+}
+
+fn rule_id(flag: &str) -> Option<&'static str> {
+    Some(match flag {
+        "-r" | "--replace" => "replace",
+        "-e" | "--regex" => "regex",
+        "-c" | "--case" => "case_rule",
+        "-p" | "--pattern" => "pattern",
+        "-i" | "--insert" => "insert",
+        "--remove" => "remove",
+        "-t" | "--trim" => "trim",
+        "--renumber" => "renumber",
+        "--move" => "move_rule",
+        "--swap" => "swap",
+        "--names" => "names",
+        _ => return None,
+    })
+}
+
+fn rule_events(
+    cli: &Cli,
+    matches: &clap::ArgMatches,
+    modifiers: &HashMap<String, Vec<Vec<String>>>,
+) -> Vec<RuleEvent> {
+    let mut events = Vec::new();
+    macro_rules! add {
+        ($id:literal, $kind:literal, $arity:literal, $values:expr) => {
+            add_rule_events(&mut events, matches, modifiers, $id, $kind, $arity, $values)
+        };
+    }
+    add!("replace", "replace", 2, &cli.replace);
+    add!("regex", "regex", 2, &cli.regex);
+    add!("case_rule", "case", 1, &cli.case_rule);
+    add!("pattern", "pattern", 1, &cli.pattern);
+    add!("insert", "insert", 2, &cli.insert);
+    add!("remove", "remove", 1, &cli.remove);
+    add!("trim", "trim", 1, &cli.trim);
+    add!("renumber", "renumber", 2, &cli.renumber);
+    add!("move_rule", "move", 2, &cli.move_rule);
+    add!("swap", "swap", 1, &cli.swap);
+    add!("names", "names", 1, &cli.names);
+
+    let positions: Vec<usize> = matches
+        .indices_of("conditions")
+        .into_iter()
+        .flatten()
+        .collect();
+    for (values, positions) in cli.conditions.chunks(2).zip(positions.chunks(2)) {
+        events.push(RuleEvent::Condition {
+            pos: positions[0],
+            values: values.to_vec(),
+        });
+    }
+    let positions: Vec<usize> = matches.indices_of("preset").into_iter().flatten().collect();
+    for (name, pos) in cli.preset.iter().zip(positions) {
+        events.push(RuleEvent::Preset {
+            pos,
+            name: name.clone(),
+        });
+    }
+    events
+}
+
+fn add_rule_events(
+    events: &mut Vec<RuleEvent>,
+    matches: &clap::ArgMatches,
+    modifiers: &HashMap<String, Vec<Vec<String>>>,
+    id: &str,
+    kind: &'static str,
+    arity: usize,
+    values: &[String],
+) {
+    let positions: Vec<usize> = matches.indices_of(id).into_iter().flatten().collect();
+    for (occurrence, (values, positions)) in values
+        .chunks(arity)
+        .zip(positions.chunks(arity))
+        .enumerate()
+    {
+        events.push(RuleEvent::Rule {
+            pos: positions[0],
+            kind,
+            mods: modifiers
+                .get(id)
+                .and_then(|sets| sets.get(occurrence))
+                .cloned()
+                .unwrap_or_default(),
+            values: values.to_vec(),
+        });
+    }
+}
+
+fn undo(id: Option<u64>) {
     match batch::undo(id) {
         Ok((reverted, errors)) => {
             println!("reverted {} item(s)", reverted.len());
@@ -529,4 +662,40 @@ fn history() {
 fn die(msg: &str) -> ! {
     eprintln!("error: {msg}");
     exit(1)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clap_preserves_rule_order_and_suffix_modifiers() {
+        let args = [
+            "-c",
+            "upper",
+            "-r:ci:first",
+            "A",
+            "b",
+            "--if",
+            "ext:eq",
+            "toml",
+            "Cargo.toml",
+        ]
+        .map(str::to_string);
+        let (normalized, modifiers) = normalize_rule_flags(&args);
+        let matches = Cli::command().try_get_matches_from(normalized).unwrap();
+        let cli = Cli::from_arg_matches(&matches).unwrap();
+        let mut events = rule_events(&cli, &matches, &modifiers);
+        events.sort_by_key(RuleEvent::pos);
+
+        assert_eq!(cli.files, ["Cargo.toml"]);
+        assert!(matches!(
+            &events[..],
+            [
+                RuleEvent::Rule { kind: "case", .. },
+                RuleEvent::Rule { kind: "replace", mods, .. },
+                RuleEvent::Condition { .. }
+            ] if mods == &["ci", "first"]
+        ));
+    }
 }

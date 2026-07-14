@@ -24,7 +24,7 @@ use history::{date_str, history_at};
 pub use history::{history, record, undo};
 #[cfg(test)]
 pub(crate) use history::{record_at, undo_at};
-pub use touch::{TouchSpec, apply_touch, parse_touch};
+pub use touch::{apply_touch, parse_touch};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Op {
