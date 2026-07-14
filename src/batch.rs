@@ -268,7 +268,7 @@ pub fn plan(files: &[PathBuf], cfg: &BatchCfg) -> Vec<PlanItem> {
                     }
                     Collision::Letter => {
                         n += 1;
-                        format!("_{}", alpha(n))
+                        format!("_{}", tags::alpha(n as i64))
                     }
                     Collision::Pattern(pat) => {
                         if n > 1 {
@@ -310,17 +310,6 @@ pub fn plan(files: &[PathBuf], cfg: &BatchCfg) -> Vec<PlanItem> {
         });
     }
     items
-}
-
-fn alpha(mut n: usize) -> String {
-    let mut s = Vec::new();
-    while n > 0 {
-        n -= 1;
-        s.push(b'a' + (n % 26) as u8);
-        n /= 26;
-    }
-    s.reverse();
-    String::from_utf8(s).unwrap()
 }
 
 // ───────────────────────── execution
@@ -633,133 +622,117 @@ fn touch_one(p: &Path, spec: &TouchSpec) -> Result<bool, String> {
 
 // ───────────────────────── preview export
 
-/// Write the preview to `path`; the extension picks the format:
-/// .csv, .json, or plain text ("old -> target") for anything else.
-pub fn export_preview(items: &[PlanItem], path: &Path) -> io::Result<()> {
+fn export_rows(path: &Path, headers: &[&str], rows: Vec<(Vec<String>, String)>) -> io::Result<()> {
     use crate::presets::{csv_field, json_str};
     let ext = path
         .extension()
         .and_then(|e| e.to_str())
         .unwrap_or("")
         .to_lowercase();
-    let status = |it: &PlanItem| match (&it.issue, it.changed) {
-        (Some(e), _) => e.clone(),
-        (None, true) => "ok".to_string(),
-        (None, false) => "unchanged".to_string(),
-    };
+    let has_rows = !rows.is_empty();
     let body = match ext.as_str() {
         "csv" => {
-            let mut s = String::from("old,new,target,status\n");
-            for it in items {
-                s.push_str(&format!(
-                    "{},{},{},{}\n",
-                    csv_field(&name_of(&it.from)),
-                    csv_field(&it.new_name),
-                    csv_field(&it.target.display().to_string()),
-                    csv_field(&status(it)),
-                ));
+            let mut out = headers.join(",") + "\n";
+            for (values, _) in &rows {
+                out.push_str(
+                    &values
+                        .iter()
+                        .map(|v| csv_field(v))
+                        .collect::<Vec<_>>()
+                        .join(","),
+                );
+                out.push('\n');
             }
-            s
+            out
         }
         "json" => {
-            let rows: Vec<String> = items
+            let objects: Vec<String> = rows
                 .iter()
-                .map(|it| {
-                    format!(
-                        "  {{\"old\": {}, \"new\": {}, \"target\": {}, \"status\": {}}}",
-                        json_str(&name_of(&it.from)),
-                        json_str(&it.new_name),
-                        json_str(&it.target.display().to_string()),
-                        json_str(&status(it)),
-                    )
+                .map(|(values, _)| {
+                    let fields = headers
+                        .iter()
+                        .zip(values)
+                        .map(|(key, value)| format!("\"{key}\": {}", json_str(value)))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    format!("  {{{fields}}}")
                 })
                 .collect();
-            format!("[\n{}\n]\n", rows.join(",\n"))
+            format!("[\n{}\n]\n", objects.join(",\n"))
         }
         _ => {
-            let mut s = String::new();
-            for it in items {
-                s.push_str(&format!(
-                    "{}  ->  {}   [{}]\n",
-                    it.from.display(),
-                    it.target.display(),
-                    status(it),
-                ));
-            }
-            s
+            rows.into_iter()
+                .map(|(_, text)| text)
+                .collect::<Vec<_>>()
+                .join("\n")
+                + if has_rows { "\n" } else { "" }
         }
     };
     fs::write(path, body)
 }
 
+/// Write the preview to `path`; the extension picks the format:
+/// .csv, .json, or plain text ("old -> target") for anything else.
+pub fn export_preview(items: &[PlanItem], path: &Path) -> io::Result<()> {
+    let rows = items
+        .iter()
+        .map(|it| {
+            let status = match (&it.issue, it.changed) {
+                (Some(e), _) => e.clone(),
+                (None, true) => "ok".to_string(),
+                (None, false) => "unchanged".to_string(),
+            };
+            (
+                vec![
+                    name_of(&it.from),
+                    it.new_name.clone(),
+                    it.target.display().to_string(),
+                    status.clone(),
+                ],
+                format!(
+                    "{}  ->  {}   [{status}]",
+                    it.from.display(),
+                    it.target.display()
+                ),
+            )
+        })
+        .collect();
+    export_rows(path, &["old", "new", "target", "status"], rows)
+}
+
 /// Write an execution result log to `path` (.csv, .json, or text).
 pub fn export_results(res: &ExecResult, path: &Path) -> io::Result<()> {
-    use crate::presets::{csv_field, json_str};
-    let ext = path
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("")
-        .to_lowercase();
-    let rows: Vec<(&Op, String)> = res
+    let row = |op: &Op, result: String| {
+        (
+            vec![
+                op.from.display().to_string(),
+                op.to.display().to_string(),
+                result.clone(),
+            ],
+            format!(
+                "{}  ->  {}   [{result}]",
+                op.from.display(),
+                op.to.display()
+            ),
+        )
+    };
+    let rows = res
         .renamed
         .iter()
-        .map(|op| (op, "done".to_string()))
+        .map(|op| row(op, "done".to_string()))
         .chain(
             res.failed
                 .iter()
-                .map(|(op, e)| (op, format!("failed: {e}"))),
+                .map(|(op, e)| row(op, format!("failed: {e}"))),
         )
         .collect();
-    let body = match ext.as_str() {
-        "csv" => {
-            let mut s = String::from("from,to,result\n");
-            for (op, r) in &rows {
-                s.push_str(&format!(
-                    "{},{},{}\n",
-                    csv_field(&op.from.display().to_string()),
-                    csv_field(&op.to.display().to_string()),
-                    csv_field(r),
-                ));
-            }
-            s
-        }
-        "json" => {
-            let objs: Vec<String> = rows
-                .iter()
-                .map(|(op, r)| {
-                    format!(
-                        "  {{\"from\": {}, \"to\": {}, \"result\": {}}}",
-                        json_str(&op.from.display().to_string()),
-                        json_str(&op.to.display().to_string()),
-                        json_str(r),
-                    )
-                })
-                .collect();
-            format!("[\n{}\n]\n", objs.join(",\n"))
-        }
-        _ => {
-            let mut s = String::new();
-            for (op, r) in &rows {
-                s.push_str(&format!(
-                    "{}  ->  {}   [{r}]\n",
-                    op.from.display(),
-                    op.to.display()
-                ));
-            }
-            s
-        }
-    };
-    fs::write(path, body)
+    export_rows(path, &["from", "to", "result"], rows)
 }
 
 // ───────────────────────── history
 
 fn history_path() -> PathBuf {
-    std::env::var_os("LOCALAPPDATA")
-        .map(|d| PathBuf::from(d).join("iron_renamer"))
-        .or_else(|| std::env::var_os("HOME").map(|d| PathBuf::from(d).join(".iron_renamer")))
-        .unwrap_or_else(|| PathBuf::from(".iron_renamer"))
-        .join("history.tsv")
+    crate::presets::data_dir().join("history.tsv")
 }
 
 /// Append an applied batch (in execution order) to the history file.
@@ -925,6 +898,21 @@ mod tests {
 
     fn read(p: &Path) -> String {
         fs::read_to_string(p).unwrap()
+    }
+
+    #[test]
+    fn export_rows_formats_all_outputs() {
+        let d = tmpdir("export");
+        let rows = vec![(vec!["a,b".into(), "x".into()], "a,b -> x".into())];
+        for (ext, expected) in [
+            ("csv", "from,to\n\"a,b\",x\n"),
+            ("json", "[\n  {\"from\": \"a,b\", \"to\": \"x\"}\n]\n"),
+            ("txt", "a,b -> x\n"),
+        ] {
+            let path = d.join(format!("out.{ext}"));
+            export_rows(&path, &["from", "to"], rows.clone()).unwrap();
+            assert_eq!(read(&path), expected);
+        }
     }
 
     #[test]

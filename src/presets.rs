@@ -15,12 +15,15 @@ pub struct Preset {
 
 /// Default folder for presets; dialogs open here so saved presets act as
 /// the "recent presets" list.
-pub fn dir() -> PathBuf {
+pub(crate) fn data_dir() -> PathBuf {
     std::env::var_os("LOCALAPPDATA")
         .map(|d| PathBuf::from(d).join("iron_renamer"))
         .or_else(|| std::env::var_os("HOME").map(|d| PathBuf::from(d).join(".iron_renamer")))
         .unwrap_or_else(|| PathBuf::from(".iron_renamer"))
-        .join("presets")
+}
+
+pub fn dir() -> PathBuf {
+    data_dir().join("presets")
 }
 
 /// Resolve a CLI preset argument: a real path wins, otherwise look in the

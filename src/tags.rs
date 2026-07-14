@@ -209,7 +209,7 @@ fn counter(args: &[&str], i: usize, default: usize, letters: bool) -> Option<i64
     Some((start + step * i as i64).max(0))
 }
 
-fn alpha(mut n: i64) -> String {
+pub(crate) fn alpha(mut n: i64) -> String {
     if n < 1 {
         n = 1;
     }
