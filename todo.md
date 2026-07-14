@@ -24,20 +24,20 @@ Compared with the [Advanced Renamer v4 user guide](https://www.advancedrenamer.c
 
 ### Rules
 
-- [ ] Add `Apply to: name | extension | both` to every applicable rule; the current rules always edit the full filename.
-- [ ] Add per-rule conditions on original/new name, extension, and path (contains, starts/ends with, equals, regex, and negation).
-- [ ] Expand Replace with case sensitivity, first/Nth/all occurrence, and multiple replacement pairs.
-- [ ] Add Insert/Add text at a position, from either end, with literal or regex anchors.
-- [ ] Add Remove by position, pattern, character class/list, numbers, case, or diacritics.
-- [ ] Add Trim at start, end, both, or throughout, including inverse matching.
-- [ ] Add Renumber for an existing number (Nth number, absolute/relative, start, step, and padding).
-- [ ] Add Move-substring and Swap-around-separator rules.
-- [ ] Add List names: paste/load one new name per item and populate from current names.
-- [ ] Expand Case with inverted case and location controls (all, first letter, each word, position, or pattern).
+- [x] Add `Apply to: name | extension | both` to every applicable rule; the current rules always edit the full filename. (`:name`/`:ext` flag mods; GUI apply-to chips)
+- [x] Add per-rule conditions on original/new name, extension, and path (contains, starts/ends with, equals, regex, and negation). (CLI `--if`; engine-level — no GUI editor yet)
+- [x] Expand Replace with case sensitivity, first/Nth/all occurrence, and multiple replacement pairs. (pairs = stacked Replace rules, same effect)
+- [x] Add Insert/Add text at a position, from either end, with literal or regex anchors.
+- [x] Add Remove by position, pattern, character class/list, numbers, case, or diacritics.
+- [x] Add Trim at start, end, both, or throughout, including inverse matching.
+- [x] Add Renumber for an existing number (Nth number, absolute/relative, start, step, and padding).
+- [x] Add Move-substring and Swap-around-separator rules.
+- [x] Add List names: paste/load one new name per item and populate from current names. (GUI paste box; CLI `--names FILE`; populate-from-current still todo)
+- [x] Expand Case with inverted case and location controls (all, first letter, each word, position, or pattern).
 
 ### Patterns and tags
 
-- [ ] Replace the three hard-coded Pattern substitutions with one tag parser shared by every text rule and destination path.
+- [x] Replace the three hard-coded Pattern substitutions with one tag parser shared by every text rule and destination path. (`src/tags.rs`: `<name> <ext> <num> <index> <parent>`; destination paths arrive with Copy/Move modes)
 - [ ] Add counter tags with start, step, padding, decrementing, alphabetic, hex, Roman, and per-folder variants.
 - [ ] Add original name/extension, parent-folder, path, index, file-size, and checksum tags.
 - [ ] Add current/created/modified date-time tags with formatting and offsets.

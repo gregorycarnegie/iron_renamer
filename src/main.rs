@@ -5,6 +5,7 @@ mod batch;
 mod cli;
 mod engine;
 mod gui;
+mod tags;
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();

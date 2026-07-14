@@ -1,7 +1,7 @@
 // Slint GUI front-end over the shared engine. Live preview on every change.
 
 use crate::batch::{self, Op};
-use crate::engine::{name_of, natural_key, CaseMode, Rule};
+use crate::engine::{build_rule, name_of, natural_key, RuleEntry};
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 use std::cell::RefCell;
 use std::fs;
@@ -12,33 +12,37 @@ slint::include_modules!();
 
 #[derive(Clone)]
 struct RuleSpec {
-    kind: String, // replace | regex | case | pattern
+    kind: String,
     a: String,
     b: String,
+    mods: String, // colon-separated, same syntax as the CLI flag suffixes
 }
 
 impl RuleSpec {
-    fn build(&self) -> Option<Rule> {
-        match self.kind.as_str() {
-            "replace" => Some(Rule::Replace(self.a.clone(), self.b.clone())),
-            "regex" => regex::Regex::new(&self.a).ok().map(|re| Rule::Regex(re, self.b.clone())),
-            "case" => Some(Rule::Case(match self.a.as_str() {
-                "upper" => CaseMode::Upper,
-                "title" => CaseMode::Title,
-                _ => CaseMode::Lower,
-            })),
-            "pattern" => Some(Rule::Pattern(self.a.clone())),
-            _ => None,
-        }
+    fn build(&self) -> Result<RuleEntry, String> {
+        let mods: Vec<&str> = self.mods.split(':').filter(|m| !m.is_empty()).collect();
+        let (rule, part) = build_rule(&self.kind, &mods, &self.a, &self.b)?;
+        Ok(RuleEntry { rule, part, cond: None })
     }
 
     fn summary(&self) -> String {
-        match self.kind.as_str() {
+        let b = |default: &str| if self.b.is_empty() { default.to_string() } else { self.b.clone() };
+        let mut s = match self.kind.as_str() {
             "replace" => format!("\"{}\" → \"{}\"", self.a, self.b),
             "regex" => format!("/{}/ → \"{}\"", self.a, self.b),
-            "case" => self.a.clone(),
+            "case" if !self.b.is_empty() => format!("{} @ {}", self.a, self.b),
+            "insert" => format!("\"{}\" @ {}", self.a, b("end")),
+            "move" => format!("\"{}\" → {}", self.a, b("end")),
+            "renumber" => format!("#{} {}", self.a, self.b),
+            "swap" => format!("around \"{}\"", self.a),
+            "names" => format!("{} name(s)", self.a.lines().count()),
+            "trim" if self.a.is_empty() => "whitespace".into(),
             _ => self.a.clone(),
+        };
+        if !self.mods.is_empty() {
+            s = format!("{s} [{}]", self.mods);
         }
+        s
     }
 }
 
@@ -135,22 +139,46 @@ pub fn run() -> Result<(), slint::PlatformError> {
     on!(on_add_rule, |ui, st| {
         let kind = ui.get_new_kind().to_string();
         let (a, b) = match kind.as_str() {
-            "case" => (ui.get_case_mode().to_string(), String::new()),
+            "case" => (ui.get_case_mode().to_string(), ui.get_field_b().to_string()),
             _ => (ui.get_field_a().to_string(), ui.get_field_b().to_string()),
         };
-        if kind != "case" && a.is_empty() {
-            ui.set_status_text("rule needs a pattern first".into());
-            return;
+        // Option chips become the same mods the CLI takes as flag suffixes.
+        let mut mods: Vec<String> = Vec::new();
+        let part = ui.get_apply_part().to_string();
+        if part != "both" {
+            mods.push(part);
         }
-        let spec = RuleSpec { kind, a, b };
-        if spec.build().is_none() {
-            ui.set_status_text("invalid regex".into());
-            return;
+        match kind.as_str() {
+            "replace" => {
+                if ui.get_replace_ci() {
+                    mods.push("ci".into());
+                }
+                let occ = ui.get_replace_occ().to_string();
+                if occ != "all" {
+                    mods.push(occ);
+                }
+            }
+            "trim" => {
+                let at = ui.get_trim_at().to_string();
+                if at != "both" {
+                    mods.push(at);
+                }
+                if ui.get_trim_inv() {
+                    mods.push("inv".into());
+                }
+            }
+            _ => {}
         }
-        st.borrow_mut().rules.push(spec);
-        ui.set_field_a("".into());
-        ui.set_field_b("".into());
-        refresh(&ui, &st.borrow());
+        let spec = RuleSpec { kind, a, b, mods: mods.join(":") };
+        match spec.build() {
+            Ok(_) => {
+                st.borrow_mut().rules.push(spec);
+                ui.set_field_a("".into());
+                ui.set_field_b("".into());
+                refresh(&ui, &st.borrow());
+            }
+            Err(e) => ui.set_status_text(e.into()),
+        }
     });
 
     on!(on_remove_rule, |ui, st, i: i32| {
@@ -239,8 +267,7 @@ fn add_files(s: &mut State, paths: Vec<PathBuf>) {
             s.files.push(p);
         }
     }
-    s.files
-        .sort_by(|a, b| natural_key(&name_of(a)).cmp(&natural_key(&name_of(b))));
+    s.files.sort_by_key(|f| natural_key(&name_of(f)));
 }
 
 struct Computed {
@@ -256,7 +283,7 @@ fn compute(ui: &MainWindow, s: &State) -> Computed {
         .get_pad_text()
         .parse()
         .unwrap_or_else(|_| (start + s.files.len().max(1) - 1).to_string().len());
-    let rules: Vec<Rule> = s.rules.iter().filter_map(|r| r.build()).collect();
+    let rules: Vec<RuleEntry> = s.rules.iter().filter_map(|r| r.build().ok()).collect();
 
     let items = batch::plan(&s.files, &rules, start, pad);
     let mut rows = Vec::new();

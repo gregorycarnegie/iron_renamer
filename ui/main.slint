@@ -1,7 +1,7 @@
 // Iron Renamer — forge-industrial theme.
 // Deep steel darks, molten amber accent, monospace filenames, live preview.
 
-import { ListView } from "std-widgets.slint";
+import { ListView, TextEdit } from "std-widgets.slint";
 
 export struct FileRow {
     index: int,
@@ -157,6 +157,11 @@ export component MainWindow inherits Window {
     in-out property <string> field_a: "";
     in-out property <string> field_b: "";
     in-out property <string> case_mode: "lower";
+    in-out property <string> apply_part: "both";
+    in-out property <bool> replace_ci: false;
+    in-out property <string> replace_occ: "all";
+    in-out property <string> trim_at: "both";
+    in-out property <bool> trim_inv: false;
     in-out property <string> start_text: "1";
     in-out property <string> pad_text: "";
 
@@ -251,12 +256,28 @@ export component MainWindow inherits Window {
 
                     SectionTitle { text: "NEW RULE"; }
 
-                    HorizontalLayout {
+                    VerticalLayout {
                         spacing: 6px;
-                        Chip { label: "Replace"; active: root.new_kind == "replace"; clicked => { root.new_kind = "replace"; } }
-                        Chip { label: "Regex";   active: root.new_kind == "regex";   clicked => { root.new_kind = "regex"; } }
-                        Chip { label: "Case";    active: root.new_kind == "case";    clicked => { root.new_kind = "case"; } }
-                        Chip { label: "Pattern"; active: root.new_kind == "pattern"; clicked => { root.new_kind = "pattern"; } }
+                        HorizontalLayout {
+                            spacing: 6px;
+                            Chip { label: "Replace"; active: root.new_kind == "replace"; clicked => { root.new_kind = "replace"; } }
+                            Chip { label: "Regex";   active: root.new_kind == "regex";   clicked => { root.new_kind = "regex"; } }
+                            Chip { label: "Case";    active: root.new_kind == "case";    clicked => { root.new_kind = "case"; } }
+                            Chip { label: "Pattern"; active: root.new_kind == "pattern"; clicked => { root.new_kind = "pattern"; } }
+                        }
+                        HorizontalLayout {
+                            spacing: 6px;
+                            Chip { label: "Insert";   active: root.new_kind == "insert";   clicked => { root.new_kind = "insert"; } }
+                            Chip { label: "Remove";   active: root.new_kind == "remove";   clicked => { root.new_kind = "remove"; } }
+                            Chip { label: "Trim";     active: root.new_kind == "trim";     clicked => { root.new_kind = "trim"; } }
+                            Chip { label: "Renumber"; active: root.new_kind == "renumber"; clicked => { root.new_kind = "renumber"; } }
+                        }
+                        HorizontalLayout {
+                            spacing: 6px;
+                            Chip { label: "Move";  active: root.new_kind == "move";  clicked => { root.new_kind = "move"; } }
+                            Chip { label: "Swap";  active: root.new_kind == "swap";  clicked => { root.new_kind = "swap"; } }
+                            Chip { label: "Names"; active: root.new_kind == "names"; clicked => { root.new_kind = "names"; } }
+                        }
                     }
 
                     if root.new_kind == "replace" || root.new_kind == "regex" : VerticalLayout {
@@ -267,17 +288,38 @@ export component MainWindow inherits Window {
                             text <=> root.field_a;
                         }
                         Field {
-                            placeholder: root.new_kind == "replace" ? "replace with" : "replacement ($1, $2…)";
+                            placeholder: root.new_kind == "replace" ? "replace with (tags ok)" : "replacement ($1, $2…)";
                             mono: true;
                             text <=> root.field_b;
                         }
                     }
 
-                    if root.new_kind == "case" : HorizontalLayout {
+                    if root.new_kind == "replace" : HorizontalLayout {
                         spacing: 6px;
-                        Chip { label: "lower";  active: root.case_mode == "lower"; clicked => { root.case_mode = "lower"; } }
-                        Chip { label: "UPPER";  active: root.case_mode == "upper"; clicked => { root.case_mode = "upper"; } }
-                        Chip { label: "Title";  active: root.case_mode == "title"; clicked => { root.case_mode = "title"; } }
+                        Chip { label: "Aa";    active: root.replace_ci;           clicked => { root.replace_ci = !root.replace_ci; } }
+                        Chip { label: "all";   active: root.replace_occ == "all";   clicked => { root.replace_occ = "all"; } }
+                        Chip { label: "first"; active: root.replace_occ == "first"; clicked => { root.replace_occ = "first"; } }
+                        Chip { label: "last";  active: root.replace_occ == "last";  clicked => { root.replace_occ = "last"; } }
+                    }
+
+                    if root.new_kind == "case" : VerticalLayout {
+                        spacing: 6px;
+                        HorizontalLayout {
+                            spacing: 6px;
+                            Chip { label: "lower";  active: root.case_mode == "lower"; clicked => { root.case_mode = "lower"; } }
+                            Chip { label: "UPPER";  active: root.case_mode == "upper"; clicked => { root.case_mode = "upper"; } }
+                            Chip { label: "Title";  active: root.case_mode == "title"; clicked => { root.case_mode = "title"; } }
+                        }
+                        HorizontalLayout {
+                            spacing: 6px;
+                            Chip { label: "First";  active: root.case_mode == "first";  clicked => { root.case_mode = "first"; } }
+                            Chip { label: "iNVERT"; active: root.case_mode == "invert"; clicked => { root.case_mode = "invert"; } }
+                        }
+                        Field {
+                            placeholder: "scope: at:2,3 · re:PAT · text (blank = all)";
+                            mono: true;
+                            text <=> root.field_b;
+                        }
                     }
 
                     if root.new_kind == "pattern" : VerticalLayout {
@@ -288,11 +330,111 @@ export component MainWindow inherits Window {
                             text <=> root.field_a;
                         }
                         Text {
-                            text: "<name> stem · <ext> extension · <num> counter";
+                            text: "<name> <ext> <num> <index> <parent>";
                             color: Palette.faint;
                             font-size: 10px;
                             font-family: "Cascadia Mono";
                         }
+                    }
+
+                    if root.new_kind == "insert" || root.new_kind == "move" : VerticalLayout {
+                        spacing: 6px;
+                        Field {
+                            placeholder: root.new_kind == "insert" ? "text to insert (tags ok)" : "text to move (re:PAT for regex)";
+                            mono: true;
+                            text <=> root.field_a;
+                        }
+                        Field {
+                            placeholder: "position (blank = end)";
+                            mono: true;
+                            text <=> root.field_b;
+                        }
+                        Text {
+                            text: "start · end · 2 · -1 · before:txt · after:txt\nrbefore:PAT · rafter:PAT";
+                            color: Palette.faint;
+                            font-size: 10px;
+                            font-family: "Cascadia Mono";
+                        }
+                    }
+
+                    if root.new_kind == "remove" : VerticalLayout {
+                        spacing: 6px;
+                        Field {
+                            placeholder: "what to remove";
+                            mono: true;
+                            text <=> root.field_a;
+                        }
+                        Text {
+                            text: "text · re:PAT · pos:2,3 · chars:_-\ndigits · upper · lower · diacritics";
+                            color: Palette.faint;
+                            font-size: 10px;
+                            font-family: "Cascadia Mono";
+                        }
+                    }
+
+                    if root.new_kind == "trim" : VerticalLayout {
+                        spacing: 6px;
+                        Field {
+                            placeholder: "characters (blank = whitespace)";
+                            mono: true;
+                            text <=> root.field_a;
+                        }
+                        HorizontalLayout {
+                            spacing: 6px;
+                            Chip { label: "start"; active: root.trim_at == "start"; clicked => { root.trim_at = "start"; } }
+                            Chip { label: "end";   active: root.trim_at == "end";   clicked => { root.trim_at = "end"; } }
+                            Chip { label: "both";  active: root.trim_at == "both";  clicked => { root.trim_at = "both"; } }
+                            Chip { label: "all";   active: root.trim_at == "all";   clicked => { root.trim_at = "all"; } }
+                            Chip { label: "inv";   active: root.trim_inv;           clicked => { root.trim_inv = !root.trim_inv; } }
+                        }
+                    }
+
+                    if root.new_kind == "renumber" : VerticalLayout {
+                        spacing: 6px;
+                        Field {
+                            placeholder: "which number (1 = first)";
+                            mono: true;
+                            text <=> root.field_a;
+                        }
+                        Field {
+                            placeholder: "+5 · -3 · 10 · 10/2 (start/step)";
+                            mono: true;
+                            text <=> root.field_b;
+                        }
+                    }
+
+                    if root.new_kind == "swap" : Field {
+                        placeholder: "separator, e.g. \" - \"";
+                        mono: true;
+                        text <=> root.field_a;
+                    }
+
+                    if root.new_kind == "names" : VerticalLayout {
+                        spacing: 6px;
+                        TextEdit {
+                            height: 90px;
+                            font-size: 12px;
+                            text <=> root.field_a;
+                        }
+                        Text {
+                            text: "one new name per line, in list order";
+                            color: Palette.faint;
+                            font-size: 10px;
+                            font-family: "Cascadia Mono";
+                        }
+                    }
+
+                    HorizontalLayout {
+                        spacing: 6px;
+                        Text {
+                            text: "apply to";
+                            color: Palette.faint;
+                            font-size: 10px;
+                            vertical-alignment: center;
+                        }
+                        Chip { label: "name+ext"; active: root.apply_part == "both"; clicked => { root.apply_part = "both"; } }
+                        Chip { label: "name";     active: root.apply_part == "name"; clicked => { root.apply_part = "name"; } }
+                        Chip { label: "ext";      active: root.apply_part == "ext";  clicked => { root.apply_part = "ext"; } }
                     }
 
                     Rectangle {

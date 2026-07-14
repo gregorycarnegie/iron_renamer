@@ -4,6 +4,7 @@
 
 use crate::batch::{self, Op};
 use crate::engine::*;
+use std::fs;
 use std::path::PathBuf;
 use std::process::exit;
 
@@ -15,12 +16,30 @@ USAGE:
   iron_renamer history         list applied batches
   iron_renamer undo [ID]       revert a batch (the latest if no ID)
 
-RULES (applied in order given, to the full file name):
-  -r, --replace <OLD> <NEW>    literal text replace
+RULES (applied in order given). Every rule flag takes suffix mods, e.g.
+-r:ci:first — ':name' or ':ext' limits a rule to the stem or the extension
+(default: the whole name).
+
+  -r, --replace <OLD> <NEW>    literal replace; mods: ci (ignore case),
+                               first | last | n<N> (occurrence; default all)
   -e, --regex <PAT> <REPL>     regex replace ($1, $2 for groups)
-  -c, --case <lower|upper|title>
-  -p, --pattern <PAT>          rebuild name: <name> = stem, <ext> = extension,
-                               <num> = counter   e.g. \"trip_<num>.<ext>\"
+  -c, --case <MODE>            lower | upper | title | first | invert
+  -p, --pattern <PAT>          rebuild the name from a tag template
+  -i, --insert <TEXT> <POS>    insert text (tags ok) at POS
+      --remove <WHAT>          TEXT | re:PAT | pos:START,LEN | chars:LIST |
+                               digits | upper | lower | diacritics
+  -t, --trim <CHARS>           trim chars ('' = whitespace); mods: start |
+                               end | both (default) | all, inv (inverse set)
+      --renumber <NTH> <SPEC>  change the NTH number: +N | -N (shift) or
+                               START[/STEP] (resequence); mod: pad<N>
+      --move <PAT> <POS>       move first match (re:PAT for regex) to POS
+      --swap <SEP>             swap around first separator: 'a - b' -> 'b - a'
+      --names <FILE>           one new name per line, matched to list order
+      --if <COND> <VALUE>      condition on the previous rule:
+                               [not:]<name|new|ext|path>:<has|starts|ends|eq|re>
+
+  POS:  start | end | N | -N | before:TEXT | after:TEXT | rbefore:PAT | rafter:PAT
+  TAGS: <name> <ext> <num> <index> <parent>
 
 OPTIONS:
   --start <N>                  counter start (default 1)
@@ -30,7 +49,9 @@ OPTIONS:
 
 EXAMPLES:
   iron_renamer -r \" \" \"_\" *.mp3
-  iron_renamer -c lower -p \"photo_<num>.<ext>\" --pad 3 *.jpg -x";
+  iron_renamer -c:ext lower -p \"photo_<num>.<ext>\" --pad 3 *.jpg -x
+  iron_renamer -i:name \"<parent>_\" start --if ext:eq jpg *.* -x
+  iron_renamer --renumber 1 +100 --remove:name \" copy\" *.mkv";
 
 pub fn run(args: Vec<String>) {
     match args[0].as_str() {
@@ -39,7 +60,7 @@ pub fn run(args: Vec<String>) {
         _ => {}
     }
 
-    let mut rules: Vec<Rule> = Vec::new();
+    let mut rules: Vec<RuleEntry> = Vec::new();
     let mut files: Vec<PathBuf> = Vec::new();
     let mut apply = false;
     let mut start: usize = 1;
@@ -56,7 +77,14 @@ pub fn run(args: Vec<String>) {
             }
             v
         };
-        match a.as_str() {
+        // Rule flags carry suffix mods: -r:ci:first, --case:ext, ...
+        let (flag, mod_str) = a.split_once(':').unwrap_or((a.as_str(), ""));
+        let mods: Vec<&str> = mod_str.split(':').filter(|m| !m.is_empty()).collect();
+        let mut rule = |kind: &str, a: &str, b: &str| match build_rule(kind, &mods, a, b) {
+            Ok((rule, part)) => rules.push(RuleEntry { rule, part, cond: None }),
+            Err(e) => die(&e),
+        };
+        match flag {
             "-h" | "--help" => {
                 println!("{USAGE}");
                 return;
@@ -65,28 +93,57 @@ pub fn run(args: Vec<String>) {
             "-d" | "--dirs" => {}
             "-r" | "--replace" => {
                 let v = need(2, &mut it);
-                rules.push(Rule::Replace(v[0].clone(), v[1].clone()));
+                rule("replace", &v[0], &v[1]);
             }
             "-e" | "--regex" => {
                 let v = need(2, &mut it);
-                match regex::Regex::new(&v[0]) {
-                    Ok(re) => rules.push(Rule::Regex(re, v[1].clone())),
-                    Err(e) => die(&format!("bad regex '{}': {e}", v[0])),
-                }
+                rule("regex", &v[0], &v[1]);
             }
             "-c" | "--case" => {
                 let v = need(1, &mut it);
-                let mode = match v[0].as_str() {
-                    "lower" => CaseMode::Lower,
-                    "upper" => CaseMode::Upper,
-                    "title" => CaseMode::Title,
-                    other => die(&format!("unknown case '{other}' (lower|upper|title)")),
-                };
-                rules.push(Rule::Case(mode));
+                rule("case", &v[0], "");
             }
             "-p" | "--pattern" => {
                 let v = need(1, &mut it);
-                rules.push(Rule::Pattern(v[0].clone()));
+                rule("pattern", &v[0], "");
+            }
+            "-i" | "--insert" => {
+                let v = need(2, &mut it);
+                rule("insert", &v[0], &v[1]);
+            }
+            "--remove" => {
+                let v = need(1, &mut it);
+                rule("remove", &v[0], "");
+            }
+            "-t" | "--trim" => {
+                let v = need(1, &mut it);
+                rule("trim", &v[0], "");
+            }
+            "--renumber" => {
+                let v = need(2, &mut it);
+                rule("renumber", &v[0], &v[1]);
+            }
+            "--move" => {
+                let v = need(2, &mut it);
+                rule("move", &v[0], &v[1]);
+            }
+            "--swap" => {
+                let v = need(1, &mut it);
+                rule("swap", &v[0], "");
+            }
+            "--names" => {
+                let v = need(1, &mut it);
+                let list = fs::read_to_string(&v[0])
+                    .unwrap_or_else(|e| die(&format!("cannot read names file '{}': {e}", v[0])));
+                rule("names", &list, "");
+            }
+            "--if" => {
+                let v = need(2, &mut it);
+                let cond = build_cond(&v[0], &v[1]).unwrap_or_else(|e| die(&e));
+                match rules.last_mut() {
+                    Some(entry) => entry.cond = Some(cond),
+                    None => die("--if must follow the rule it applies to"),
+                }
             }
             "--start" => {
                 let v = need(1, &mut it);
@@ -121,7 +178,7 @@ pub fn run(args: Vec<String>) {
     }
 
     // Natural sort so photo_9 numbers before photo_10.
-    files.sort_by(|a, b| natural_key(&name_of(a)).cmp(&natural_key(&name_of(b))));
+    files.sort_by_key(|f| natural_key(&name_of(f)));
 
     if pad == 0 {
         pad = (start + files.len() - 1).to_string().len();

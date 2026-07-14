@@ -3,7 +3,7 @@
 // breaks swap cycles with temp names, and never leaves temps behind.
 // Every applied batch is recorded in a dated history file for selective undo.
 
-use crate::engine::{Rule, apply_rule, name_of};
+use crate::engine::{Ctx, RuleEntry, apply_entry, name_of};
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -61,13 +61,15 @@ pub fn name_issue(name: &str) -> Option<String> {
 /// Apply rules to every file and flag issues: bad names, in-batch duplicate
 /// targets, on-disk collisions, and over-long paths. Case-only renames are
 /// valid (NTFS handles them); collision checks are case-insensitive like NTFS.
-pub fn plan(files: &[PathBuf], rules: &[Rule], start: usize, pad: usize) -> Vec<PlanItem> {
+pub fn plan(files: &[PathBuf], rules: &[RuleEntry], start: usize, pad: usize) -> Vec<PlanItem> {
     let lower = |s: &str| s.to_lowercase();
     let mut names: Vec<String> = Vec::with_capacity(files.len());
     for (i, f) in files.iter().enumerate() {
-        let mut name = name_of(f);
-        for r in rules {
-            name = apply_rule(r, &name, start + i, pad);
+        let original = name_of(f);
+        let ctx = Ctx { index: i, num: start + i, pad, path: f, original: &original };
+        let mut name = original.clone();
+        for e in rules {
+            name = apply_entry(e, &name, &ctx);
         }
         names.push(name);
     }
@@ -303,6 +305,17 @@ fn date_str(id_millis: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::build_rule;
+
+    fn rules(specs: &[(&str, &str, &str)]) -> Vec<RuleEntry> {
+        specs
+            .iter()
+            .map(|(kind, a, b)| {
+                let (rule, part) = build_rule(kind, &[], a, b).unwrap();
+                RuleEntry { rule, part, cond: None }
+            })
+            .collect()
+    }
 
     fn tmpdir(name: &str) -> PathBuf {
         let d = std::env::temp_dir().join(format!("iron_renamer_test_{name}_{}", std::process::id()));
@@ -388,25 +401,25 @@ mod tests {
         put(&d, "other.jpg", "");
         let files = vec![d.join("img1.jpg"), d.join("img2.jpg")];
 
-        let case_rule = vec![Rule::Replace("img".into(), "IMG".into())];
+        let case_rule = rules(&[("replace", "img", "IMG")]);
         let items = plan(&files, &case_rule, 1, 1);
         assert!(items.iter().all(|i| i.changed && i.issue.is_none()), "case-only renames are valid");
 
-        let dup_rule = vec![Rule::Pattern("same.jpg".into())];
+        let dup_rule = rules(&[("pattern", "same.jpg", "")]);
         let items = plan(&files, &dup_rule, 1, 1);
         assert!(items.iter().all(|i| i.issue.as_deref() == Some("duplicate target")));
 
-        let clash_rule = vec![Rule::Replace("img1".into(), "other".into())];
+        let clash_rule = rules(&[("replace", "img1", "other")]);
         let items = plan(&files, &clash_rule, 1, 1);
         assert_eq!(items[0].issue.as_deref(), Some("target exists"));
         assert!(items[1].issue.is_none());
 
         // Swap inside one batch is not a conflict: each target is vacated.
-        let swap_rule = vec![
-            Rule::Replace("img1".into(), "tmpX".into()),
-            Rule::Replace("img2".into(), "img1".into()),
-            Rule::Replace("tmpX".into(), "img2".into()),
-        ];
+        let swap_rule = rules(&[
+            ("replace", "img1", "tmpX"),
+            ("replace", "img2", "img1"),
+            ("replace", "tmpX", "img2"),
+        ]);
         let items = plan(&files, &swap_rule, 1, 1);
         assert!(items.iter().all(|i| i.changed && i.issue.is_none()));
     }

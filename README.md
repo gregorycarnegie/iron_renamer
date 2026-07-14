@@ -29,11 +29,27 @@ iron_renamer [RULES] [OPTIONS] <files or globs>...
 iron_renamer history         # list applied batches with dates and IDs
 iron_renamer undo [ID]       # revert a batch (the latest if no ID)
 
-RULES (applied in order given, to the full file name):
-  -r, --replace <OLD> <NEW>    literal text replace
+RULES (applied in order given). Every rule flag takes suffix mods, e.g.
+-r:ci:first — ':name' or ':ext' limits a rule to the stem or the extension
+(default: the whole name).
+
+  -r, --replace <OLD> <NEW>    literal replace; mods: ci, first|last|n<N>
   -e, --regex <PAT> <REPL>     regex replace ($1, $2 for groups)
-  -c, --case <lower|upper|title>
-  -p, --pattern <PAT>          rebuild name: <name> stem, <ext> extension, <num> counter
+  -c, --case <MODE>            lower | upper | title | first | invert
+  -p, --pattern <PAT>          rebuild the name from a tag template
+  -i, --insert <TEXT> <POS>    insert text (tags ok) at POS
+      --remove <WHAT>          TEXT | re:PAT | pos:START,LEN | chars:LIST |
+                               digits | upper | lower | diacritics
+  -t, --trim <CHARS>           mods: start|end|both|all, inv ('' = whitespace)
+      --renumber <NTH> <SPEC>  +N | -N (shift) or START[/STEP]; mod: pad<N>
+      --move <PAT> <POS>       move first match (re:PAT for regex) to POS
+      --swap <SEP>             swap around first separator: 'a - b' -> 'b - a'
+      --names <FILE>           one new name per line, matched to list order
+      --if <COND> <VALUE>      condition on the previous rule:
+                               [not:]<name|new|ext|path>:<has|starts|ends|eq|re>
+
+  POS:  start | end | N | -N | before:TEXT | after:TEXT | rbefore:PAT | rafter:PAT
+  TAGS: <name> <ext> <num> <index> <parent>   (in pattern/insert/replacements)
 
 OPTIONS:
   --start <N>                  counter start (default 1)
@@ -47,7 +63,9 @@ Examples:
 ```
 iron_renamer -r " " "_" *.mp3
 iron_renamer -e "(\d+)" "ep$1" *.mkv
-iron_renamer -c lower -p "trip_<num>.<ext>" --pad 3 *.jpg -x
+iron_renamer -c:ext lower -p "trip_<num>.<ext>" --pad 3 *.jpg -x
+iron_renamer -i:name "<parent>_" start --if ext:eq jpg *.* -x
+iron_renamer --renumber 1 +100 --remove:name " copy" *.mkv
 ```
 
 Globs (`*`, `?`) are expanded internally, so they work from PowerShell too.
@@ -71,7 +89,8 @@ cargo test
 
 | Path             | What                                        |
 |------------------|---------------------------------------------|
-| `src/engine.rs`  | Rule engine (rules, natural sort, globbing) + tests |
+| `src/engine.rs`  | Rule engine (rules, shared rule parsing, natural sort, globbing) + tests |
+| `src/tags.rs`    | Tag parser shared by pattern/insert/replacement text + tests |
 | `src/batch.rs`   | Shared planner/executor: validation, chain/swap-safe renaming, dated undo history + tests |
 | `src/cli.rs`     | CLI front-end                                |
 | `src/gui.rs`     | GUI state and callbacks                      |
