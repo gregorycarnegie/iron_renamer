@@ -71,6 +71,6 @@ Compared with the [Advanced Renamer v4 user guide](https://www.advancedrenamer.c
 
 ## Verification
 
-- [ ] Add one end-to-end test covering preview, a swap/chain rename, collision handling, and undo in a temporary directory.
-- [ ] Add table-driven rule/tag tests for Unicode names, dotfiles, multiple extensions, extensionless files, and case-insensitive filesystems.
-- [ ] Test copy/move/rename recovery by forcing a failure halfway through a batch.
+- [x] Add one end-to-end test covering preview, a swap/chain rename, collision handling, and undo in a temporary directory. (`src/e2e.rs`)
+- [x] Add table-driven rule/tag tests for Unicode names, dotfiles, multiple extensions, extensionless files, and case-insensitive filesystems.
+- [x] Test copy/move/rename recovery by forcing a failure halfway through a batch. (all three modes, including retry of the failed op)

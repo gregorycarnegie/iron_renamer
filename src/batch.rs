@@ -437,7 +437,7 @@ pub fn record(ops: &[Op]) -> io::Result<u64> {
     record_at(&history_path(), ops)
 }
 
-fn record_at(path: &Path, ops: &[Op]) -> io::Result<u64> {
+pub(crate) fn record_at(path: &Path, ops: &[Op]) -> io::Result<u64> {
     if ops.is_empty() {
         return Ok(0);
     }
@@ -492,7 +492,7 @@ pub fn undo(id: Option<u64>) -> Result<(Vec<Op>, Vec<String>), String> {
     undo_at(&history_path(), id)
 }
 
-fn undo_at(path: &Path, id: Option<u64>) -> Result<(Vec<Op>, Vec<String>), String> {
+pub(crate) fn undo_at(path: &Path, id: Option<u64>) -> Result<(Vec<Op>, Vec<String>), String> {
     let all = read_history(path);
     let id = id
         .or_else(|| all.iter().map(|(i, _)| *i).max())
