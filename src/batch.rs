@@ -64,9 +64,13 @@ pub fn name_issue(name: &str) -> Option<String> {
 pub fn plan(files: &[PathBuf], rules: &[RuleEntry], start: usize, pad: usize) -> Vec<PlanItem> {
     let lower = |s: &str| s.to_lowercase();
     let mut names: Vec<String> = Vec::with_capacity(files.len());
+    let mut per_folder: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
     for (i, f) in files.iter().enumerate() {
         let original = name_of(f);
-        let ctx = Ctx { index: i, num: start + i, pad, path: f, original: &original };
+        let folder = f.parent().map(|p| lower(&p.to_string_lossy())).unwrap_or_default();
+        let folder_num = per_folder.entry(folder).and_modify(|n| *n += 1).or_insert(1);
+        let ctx =
+            Ctx { index: i, num: start + i, pad, folder_num: *folder_num, path: f, original: &original };
         let mut name = original.clone();
         for e in rules {
             name = apply_entry(e, &name, &ctx);
@@ -287,19 +291,8 @@ fn undo_at(path: &Path, id: Option<u64>) -> Result<(Vec<Op>, Vec<String>), Strin
 }
 
 fn date_str(id_millis: u64) -> String {
-    let secs = id_millis / 1000;
-    let (days, rem) = (secs / 86400, secs % 86400);
-    // Civil-from-days (Howard Hinnant's algorithm), UTC.
-    let z = days as i64 + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = yoe + era * 400 + i64::from(m <= 2);
-    format!("{y:04}-{m:02}-{d:02} {:02}:{:02} UTC", rem / 3600, rem % 3600 / 60)
+    let (y, m, d, h, mi, _) = crate::tags::civil_utc((id_millis / 1000) as i64);
+    format!("{y:04}-{m:02}-{d:02} {h:02}:{mi:02} UTC")
 }
 
 #[cfg(test)]

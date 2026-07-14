@@ -38,12 +38,12 @@ Compared with the [Advanced Renamer v4 user guide](https://www.advancedrenamer.c
 ### Patterns and tags
 
 - [x] Replace the three hard-coded Pattern substitutions with one tag parser shared by every text rule and destination path. (`src/tags.rs`: `<name> <ext> <num> <index> <parent>`; destination paths arrive with Copy/Move modes)
-- [ ] Add counter tags with start, step, padding, decrementing, alphabetic, hex, Roman, and per-folder variants.
-- [ ] Add original name/extension, parent-folder, path, index, file-size, and checksum tags.
-- [ ] Add current/created/modified date-time tags with formatting and offsets.
-- [ ] Add random number/string tags.
-- [ ] Add tag modifiers (fallback/default, upper/lower/title, substring, pad, trim, replace, and arithmetic).
-- [ ] Add a tag picker and item-details panel instead of requiring users to memorize tag syntax.
+- [x] Add counter tags with start, step, padding, decrementing, alphabetic, hex, Roman, and per-folder variants. (`<num|hex|alpha|roman|dirnum[:START[:STEP]]>`; negative STEP decrements; pad via batch pad or `|pad:N`)
+- [x] Add original name/extension, parent-folder, path, index, file-size, and checksum tags. (`<oname> <oext> <parent> <path> <index> <size[:kb|mb]> <crc32>`)
+- [x] Add current/created/modified date-time tags with formatting and offsets. (`<now|created|modified[:FMT[:OFFSET]]>`, UTC)
+- [x] Add random number/string tags. (`<rand[:MIN[:MAX]]> <rands[:LEN]>`)
+- [x] Add tag modifiers (fallback/default, upper/lower/title, substring, pad, trim, replace, and arithmetic).
+- [x] Add a tag picker and item-details panel instead of requiring users to memorize tag syntax. (collapsible tag chips insert into the active rule; clicking a file row shows path/size/dates)
 
 ### Batch features
 

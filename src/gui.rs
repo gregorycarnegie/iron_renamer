@@ -204,6 +204,33 @@ pub fn run() -> Result<(), slint::PlatformError> {
         refresh(&ui, &st.borrow());
     });
 
+    // Tag picker: append the tag to whichever field takes tag text.
+    on!(on_insert_tag, |ui, st, tag: SharedString| {
+        let _ = st;
+        match ui.get_new_kind().as_str() {
+            "replace" | "regex" => ui.set_field_b(format!("{}{tag}", ui.get_field_b()).into()),
+            _ => ui.set_field_a(format!("{}{tag}", ui.get_field_a()).into()),
+        }
+    });
+
+    // Item details in the status bar.
+    on!(on_row_clicked, |ui, st, i: i32| {
+        let s = st.borrow();
+        let Some(f) = s.files.get(i as usize) else { return };
+        let msg = match fs::metadata(f) {
+            Ok(md) => format!(
+                "{} · {} bytes · created {} · modified {}",
+                f.display(),
+                md.len(),
+                md.created().map(crate::tags::dt_string).unwrap_or_default(),
+                md.modified().map(crate::tags::dt_string).unwrap_or_default()
+            ),
+            Err(_) => f.display().to_string(),
+        };
+        drop(s);
+        ui.set_status_text(msg.into());
+    });
+
     on!(on_apply_batch, |ui, st| {
         let plan = compute(&ui, &st.borrow()).plan;
         let planned = plan.len();

@@ -175,6 +175,9 @@ export component MainWindow inherits Window {
     callback apply_batch();
     callback undo_batch();
     callback numbering_changed();
+    callback insert_tag(string);
+    callback row_clicked(int);
+    in-out property <bool> show_tags: false;
 
     VerticalLayout {
         padding: 0;
@@ -458,6 +461,64 @@ export component MainWindow inherits Window {
                         add-ta := TouchArea { clicked => { root.add_rule(); } }
                     }
 
+                    HorizontalLayout {
+                        spacing: 6px;
+                        SectionTitle { text: "TAGS"; vertical-alignment: center; }
+                        Rectangle { horizontal-stretch: 1; }
+                        Chip {
+                            label: root.show_tags ? "hide" : "show";
+                            active: root.show_tags;
+                            clicked => { root.show_tags = !root.show_tags; }
+                        }
+                    }
+
+                    if root.show_tags : VerticalLayout {
+                        spacing: 4px;
+                        HorizontalLayout {
+                            spacing: 4px;
+                            Chip { label: "<name>";  clicked => { root.insert_tag("<name>"); } }
+                            Chip { label: "<ext>";   clicked => { root.insert_tag("<ext>"); } }
+                            Chip { label: "<num>";   clicked => { root.insert_tag("<num>"); } }
+                        }
+                        HorizontalLayout {
+                            spacing: 4px;
+                            Chip { label: "<oname>"; clicked => { root.insert_tag("<oname>"); } }
+                            Chip { label: "<oext>";  clicked => { root.insert_tag("<oext>"); } }
+                            Chip { label: "<index>"; clicked => { root.insert_tag("<index>"); } }
+                        }
+                        HorizontalLayout {
+                            spacing: 4px;
+                            Chip { label: "<parent>"; clicked => { root.insert_tag("<parent>"); } }
+                            Chip { label: "<path>";   clicked => { root.insert_tag("<path>"); } }
+                            Chip { label: "<dirnum>"; clicked => { root.insert_tag("<dirnum>"); } }
+                        }
+                        HorizontalLayout {
+                            spacing: 4px;
+                            Chip { label: "<alpha>"; clicked => { root.insert_tag("<alpha>"); } }
+                            Chip { label: "<hex>";   clicked => { root.insert_tag("<hex>"); } }
+                            Chip { label: "<roman>"; clicked => { root.insert_tag("<roman>"); } }
+                        }
+                        HorizontalLayout {
+                            spacing: 4px;
+                            Chip { label: "<size>";  clicked => { root.insert_tag("<size>"); } }
+                            Chip { label: "<crc32>"; clicked => { root.insert_tag("<crc32>"); } }
+                            Chip { label: "<rand>";  clicked => { root.insert_tag("<rand>"); } }
+                            Chip { label: "<rands>"; clicked => { root.insert_tag("<rands>"); } }
+                        }
+                        HorizontalLayout {
+                            spacing: 4px;
+                            Chip { label: "<created>";  clicked => { root.insert_tag("<created>"); } }
+                            Chip { label: "<modified>"; clicked => { root.insert_tag("<modified>"); } }
+                            Chip { label: "<now>";      clicked => { root.insert_tag("<now>"); } }
+                        }
+                        Text {
+                            text: "counters take :START:STEP · dates :FMT:OFFSET\nmods: |upper |lower |title |sub:0,3 |pad:4\n|trim |replace:a,b |fallback:x |+N |-N";
+                            color: Palette.faint;
+                            font-size: 10px;
+                            font-family: "Cascadia Mono";
+                        }
+                    }
+
                     Rectangle { height: 6px; }
                     SectionTitle { text: "RULE STACK — RUNS TOP TO BOTTOM"; }
 
@@ -594,7 +655,7 @@ export component MainWindow inherits Window {
                     for row in root.files : Rectangle {
                         height: 30px;
                         background: touch.has-hover ? Palette.line-soft : (mod(row.index, 2) == 0 ? transparent : #14161b);
-                        touch := TouchArea {}
+                        touch := TouchArea { clicked => { root.row_clicked(row.index); } }
                         HorizontalLayout {
                             padding-left: 16px;
                             padding-right: 16px;

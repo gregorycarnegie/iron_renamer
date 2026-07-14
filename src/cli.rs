@@ -39,7 +39,15 @@ RULES (applied in order given). Every rule flag takes suffix mods, e.g.
                                [not:]<name|new|ext|path>:<has|starts|ends|eq|re>
 
   POS:  start | end | N | -N | before:TEXT | after:TEXT | rbefore:PAT | rafter:PAT
-  TAGS: <name> <ext> <num> <index> <parent>
+  TAGS (in pattern/insert/replacement text; <tag[:args][|mod]...>):
+        <name> <ext> <oname> <oext> <index> <parent> <path> <size[:kb|mb]>
+        <crc32> <rand[:MIN[:MAX]]> <rands[:LEN]>
+        counters, all take :START:STEP -- <num> <hex> <alpha> <roman>
+        <dirnum> (resets per folder)
+        dates (UTC) -- <now|created|modified[:FMT[:OFFSET]]>, FMT tokens
+        yyyy yy MM dd HH mm ss, OFFSET like +3d -12h
+  MODS: |upper |lower |title |sub:START[,LEN] |pad:N |trim[:CHARS]
+        |replace:OLD[,NEW] |fallback:TEXT |+N |-N |*N |/N
 
 OPTIONS:
   --start <N>                  counter start (default 1)

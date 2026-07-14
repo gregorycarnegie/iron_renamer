@@ -112,9 +112,10 @@ pub struct RuleEntry {
 
 /// Per-file context a rule application runs in.
 pub struct Ctx<'a> {
-    pub index: usize, // 0-based list position
-    pub num: usize,   // counter (start + index)
+    pub index: usize,      // 0-based list position
+    pub num: usize,        // counter (start + index)
     pub pad: usize,
+    pub folder_num: usize, // 1-based position among list items in the same folder
     pub path: &'a Path,
     pub original: &'a str,
 }
@@ -237,7 +238,7 @@ fn replace_occ(s: &str, find: &str, repl: &str, ci: bool, occ: &Occurrence) -> S
     out
 }
 
-fn change_case(s: &str, mode: CaseMode) -> String {
+pub(crate) fn change_case(s: &str, mode: CaseMode) -> String {
     match mode {
         CaseMode::Lower => s.to_lowercase(),
         CaseMode::Upper => s.to_uppercase(),
@@ -783,7 +784,7 @@ mod tests {
 
     fn run(e: &RuleEntry, name: &str) -> String {
         let path = Path::new("C:/photos/trip").join(name);
-        let ctx = Ctx { index: 6, num: 7, pad: 3, path: &path, original: name };
+        let ctx = Ctx { index: 6, num: 7, pad: 3, folder_num: 1, path: &path, original: name };
         apply_entry(e, name, &ctx)
     }
 
