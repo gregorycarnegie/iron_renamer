@@ -52,6 +52,13 @@ RULES (applied in order given). Every rule flag takes suffix mods, e.g.
 OPTIONS:
   --start <N>                  counter start (default 1)
   --pad <N>                    zero-pad width (default: fits the largest number)
+  --copy-to <DEST>             copy instead of renaming; DEST is a folder
+                               template (tags ok, e.g. \"sorted\\<ext>\"),
+                               relative to each file; dirs are created
+  --move-to <DEST>             move instead of renaming (same DEST rules)
+  --collide <POLICY>           on name collision: fail (default) | number
+                               (\"name (2)\") | letter (\"name_b\") | any other
+                               value = tag pattern appended to the stem
   -d, --dirs                   rename folders instead of files
   -x, --apply                  actually rename (otherwise preview only)
 
@@ -73,6 +80,9 @@ pub fn run(args: Vec<String>) {
     let mut apply = false;
     let mut start: usize = 1;
     let mut pad: usize = 0;
+    let mut mode = batch::Mode::Rename;
+    let mut dest = String::new();
+    let mut collision = batch::Collision::Fail;
     // Pre-scan so --dirs applies to globs regardless of argument order.
     let dirs = args.iter().any(|a| a == "-d" || a == "--dirs");
 
@@ -153,6 +163,23 @@ pub fn run(args: Vec<String>) {
                     None => die("--if must follow the rule it applies to"),
                 }
             }
+            "--copy-to" => {
+                let v = need(1, &mut it);
+                (mode, dest) = (batch::Mode::Copy, v[0].clone());
+            }
+            "--move-to" => {
+                let v = need(1, &mut it);
+                (mode, dest) = (batch::Mode::Move, v[0].clone());
+            }
+            "--collide" => {
+                let v = need(1, &mut it);
+                collision = match v[0].as_str() {
+                    "fail" => batch::Collision::Fail,
+                    "number" => batch::Collision::Number,
+                    "letter" => batch::Collision::Letter,
+                    pat => batch::Collision::Pattern(pat.to_string()),
+                };
+            }
             "--start" => {
                 let v = need(1, &mut it);
                 start = v[0].parse().unwrap_or_else(|_| die("--start needs a number"));
@@ -165,7 +192,7 @@ pub fn run(args: Vec<String>) {
         }
     }
 
-    if rules.is_empty() {
+    if rules.is_empty() && dest.is_empty() {
         die("no rules given (see --help)");
     }
     if files.is_empty() {
@@ -192,52 +219,69 @@ pub fn run(args: Vec<String>) {
         pad = (start + files.len() - 1).to_string().len();
     }
 
-    let items = batch::plan(&files, &rules, start, pad, &std::collections::HashMap::new());
+    let overrides = std::collections::HashMap::new();
+    let cfg = batch::BatchCfg { rules: &rules, start, pad, overrides: &overrides, mode, dest: &dest, collision };
+    let items = batch::plan(&files, &cfg);
+    let (verb, done) = match mode {
+        batch::Mode::Rename => ("rename", "renamed"),
+        batch::Mode::Copy => ("copy", "copied"),
+        batch::Mode::Move => ("move", "moved"),
+    };
     let mut ops: Vec<Op> = Vec::new();
     let mut conflicts = 0;
     for item in items.iter().filter(|i| i.changed) {
+        // Renames stay in place, so the name is enough; copy/move show the target path.
+        let shown = if mode == batch::Mode::Rename && dest.is_empty() {
+            item.new_name.clone()
+        } else {
+            item.target.display().to_string()
+        };
         match &item.issue {
             Some(e) => {
                 conflicts += 1;
-                println!("{}  ->  {}   [{e}]", item.from.display(), item.new_name);
+                println!("{}  ->  {shown}   [{e}]", item.from.display());
             }
             None => {
-                println!("{}  ->  {}", item.from.display(), item.new_name);
+                println!("{}  ->  {shown}", item.from.display());
                 ops.push(item.op());
             }
         }
     }
 
     if ops.is_empty() && conflicts == 0 {
-        println!("nothing to rename ({} item(s) unchanged)", files.len());
+        println!("nothing to {verb} ({} item(s) unchanged)", files.len());
         return;
     }
 
     if !apply {
-        println!("\npreview only — re-run with --apply to rename {} item(s)", ops.len());
+        println!("\npreview only — re-run with --apply to {verb} {} item(s)", ops.len());
         if conflicts > 0 {
             eprintln!("{conflicts} conflict(s) must be fixed first");
         }
         return;
     }
     if conflicts > 0 {
-        die(&format!("{conflicts} conflict(s) above — nothing renamed"));
+        die(&format!("{conflicts} conflict(s) above — nothing {done}"));
     }
 
     let planned = ops.len();
-    let res = batch::execute(ops);
-    if let Err(e) = batch::record(&res.renamed) {
+    let res = batch::execute(ops, mode);
+    if mode != batch::Mode::Copy
+        && let Err(e) = batch::record(&res.renamed)
+    {
         eprintln!("warning: could not write batch history: {e}");
     }
     for (op, e) in &res.failed {
-        eprintln!("FAILED {} -> {}: {e}", op.from.display(), name_of(&op.to));
+        eprintln!("FAILED {} -> {}: {e}", op.from.display(), op.to.display());
     }
-    println!("\nrenamed {} of {planned} item(s)", res.renamed.len());
+    println!("\n{done} {} of {planned} item(s)", res.renamed.len());
     if !res.failed.is_empty() {
         eprintln!("{} failed — re-run the same command to retry them", res.failed.len());
         exit(1);
     }
-    println!("'iron_renamer undo' reverts this batch");
+    if mode != batch::Mode::Copy {
+        println!("'iron_renamer undo' reverts this batch");
+    }
 }
 
 fn undo(id_arg: Option<&String>) {

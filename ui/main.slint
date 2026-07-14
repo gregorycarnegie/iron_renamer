@@ -192,6 +192,11 @@ export component MainWindow inherits Window {
     in-out property <string> sort_by: "manual";
     in-out property <bool> sort_desc: false;
     in-out property <string> override_text: "";
+    in-out property <string> batch_mode: "rename";
+    in-out property <string> dest_text: "";
+    in-out property <string> collide: "fail";
+    in-out property <string> collide_pattern: "";
+    callback output_changed();
 
     VerticalLayout {
         padding: 0;
@@ -585,6 +590,39 @@ export component MainWindow inherits Window {
 
                     Rectangle { vertical-stretch: 1; }
 
+                    SectionTitle { text: "OUTPUT"; }
+                    HorizontalLayout {
+                        spacing: 6px;
+                        Chip { label: "Rename"; active: root.batch_mode == "rename"; clicked => { root.batch_mode = "rename"; root.output_changed(); } }
+                        Chip { label: "Copy";   active: root.batch_mode == "copy";   clicked => { root.batch_mode = "copy";   root.output_changed(); } }
+                        Chip { label: "Move";   active: root.batch_mode == "move";   clicked => { root.batch_mode = "move";   root.output_changed(); } }
+                    }
+                    if root.batch_mode != "rename" : Field {
+                        mono: true;
+                        placeholder: "destination folder (tags ok)";
+                        text <=> root.dest_text;
+                        edited => { root.output_changed(); }
+                    }
+                    HorizontalLayout {
+                        spacing: 6px;
+                        Text {
+                            text: "collide";
+                            color: Palette.faint;
+                            font-size: 10px;
+                            vertical-alignment: center;
+                        }
+                        Chip { label: "fail"; active: root.collide == "fail";    clicked => { root.collide = "fail";    root.output_changed(); } }
+                        Chip { label: "(2)";  active: root.collide == "number";  clicked => { root.collide = "number";  root.output_changed(); } }
+                        Chip { label: "_b";   active: root.collide == "letter";  clicked => { root.collide = "letter";  root.output_changed(); } }
+                        Chip { label: "tag";  active: root.collide == "pattern"; clicked => { root.collide = "pattern"; root.output_changed(); } }
+                    }
+                    if root.collide == "pattern" : Field {
+                        mono: true;
+                        placeholder: "suffix pattern, e.g. _<num>";
+                        text <=> root.collide_pattern;
+                        edited => { root.output_changed(); }
+                    }
+
                     SectionTitle { text: "NUMBERING"; }
                     HorizontalLayout {
                         spacing: 8px;
@@ -823,7 +861,9 @@ export component MainWindow inherits Window {
                             drop-shadow-blur: root.changed > 0 ? 16px : 0;
                             drop-shadow-color: #ff5c3844;
                             Text {
-                                text: root.changed > 0 ? "RENAME " + root.changed + " FILES" : "NOTHING TO RENAME";
+                                text: root.changed > 0
+                                    ? (root.batch_mode == "copy" ? "COPY " : root.batch_mode == "move" ? "MOVE " : "RENAME ") + root.changed + " FILES"
+                                    : "NOTHING TO DO";
                                 color: root.changed > 0 ? #17110b : Palette.faint;
                                 font-size: 12px;
                                 font-weight: 900;

@@ -1,6 +1,6 @@
 // Slint GUI front-end over the shared engine. Live preview on every change.
 
-use crate::batch::{self, Op};
+use crate::batch::{self, BatchCfg, Collision, Mode, Op};
 use crate::engine::{RuleEntry, build_rule, name_of, natural_key, split_ext, wild_match};
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 use std::cell::RefCell;
@@ -431,6 +431,10 @@ pub fn run() -> Result<(), slint::PlatformError> {
         refresh(&ui, &st.borrow());
     });
 
+    on!(on_output_changed, |ui, st| {
+        refresh(&ui, &st.borrow());
+    });
+
     // Tag picker: append the tag to whichever field takes tag text.
     on!(on_insert_tag, |ui, st, tag: SharedString| {
         let _ = st;
@@ -465,30 +469,36 @@ pub fn run() -> Result<(), slint::PlatformError> {
     });
 
     on!(on_apply_batch, |ui, st| {
-        let plan = compute(&ui, &st.borrow()).plan;
-        let planned = plan.len();
-        let res = batch::execute(plan);
+        let c = compute(&ui, &st.borrow());
+        let planned = c.plan.len();
+        let res = batch::execute(c.plan, c.mode);
+        let done = match c.mode {
+            Mode::Rename => "renamed",
+            Mode::Copy => "copied",
+            Mode::Move => "moved",
+        };
         let mut warn = String::new();
-        if let Err(e) = batch::record(&res.renamed) {
-            warn = format!(" · history not written: {e}");
-        }
-        let mut s = st.borrow_mut();
-        for op in &res.renamed {
-            if let Some(f) = s.files.iter_mut().find(|f| **f == op.from) {
-                *f = op.to.clone();
+        if c.mode != Mode::Copy {
+            if let Err(e) = batch::record(&res.renamed) {
+                warn = format!(" · history not written: {e}");
             }
-            s.overrides.remove(&op.from); // override served its purpose
+            let mut s = st.borrow_mut();
+            for op in &res.renamed {
+                if let Some(f) = s.files.iter_mut().find(|f| **f == op.from) {
+                    *f = op.to.clone();
+                }
+                s.overrides.remove(&op.from); // override served its purpose
+            }
+            if !res.renamed.is_empty() {
+                s.can_undo = true;
+            }
         }
-        if !res.renamed.is_empty() {
-            s.can_undo = true;
-        }
-        drop(s);
         refresh(&ui, &st.borrow());
         ui.set_status_text(
             match res.failed.len() {
-                0 => format!("renamed {} of {planned} item(s){warn}", res.renamed.len()),
+                0 => format!("{done} {} of {planned} item(s){warn}", res.renamed.len()),
                 n => format!(
-                    "renamed {} of {planned} item(s), {n} failed — kept in list for retry{warn}",
+                    "{done} {} of {planned} item(s), {n} failed — kept in list for retry{warn}",
                     res.renamed.len()
                 ),
             }
@@ -525,6 +535,7 @@ pub fn run() -> Result<(), slint::PlatformError> {
 struct Computed {
     rows: Vec<FileRow>,
     plan: Vec<Op>, // only conflict-free changes
+    mode: Mode,
     changed: i32,
     errors: i32,
 }
@@ -536,8 +547,24 @@ fn compute(ui: &MainWindow, s: &State) -> Computed {
         .parse()
         .unwrap_or_else(|_| (start + s.files.len().max(1) - 1).to_string().len());
     let rules: Vec<RuleEntry> = s.rules.iter().filter_map(|r| r.build().ok()).collect();
+    let mode = match ui.get_batch_mode().as_str() {
+        "copy" => Mode::Copy,
+        "move" => Mode::Move,
+        _ => Mode::Rename,
+    };
+    let dest = if mode == Mode::Rename { String::new() } else { ui.get_dest_text().to_string() };
+    let collision = match ui.get_collide().as_str() {
+        "number" => Collision::Number,
+        "letter" => Collision::Letter,
+        "pattern" => {
+            let p = ui.get_collide_pattern().to_string();
+            Collision::Pattern(if p.is_empty() { "_<num>".into() } else { p })
+        }
+        _ => Collision::Fail,
+    };
+    let cfg = BatchCfg { rules: &rules, start, pad, overrides: &s.overrides, mode, dest: &dest, collision };
 
-    let items = batch::plan(&s.files, &rules, start, pad, &s.overrides);
+    let items = batch::plan(&s.files, &cfg);
     let mut rows = Vec::new();
     let mut plan = Vec::new();
     let (mut changed, mut errors) = (0, 0);
@@ -558,16 +585,22 @@ fn compute(ui: &MainWindow, s: &State) -> Computed {
             2 => errors += 1,
             _ => {}
         }
+        // Renames stay in place, so the name is enough; copy/move show the target path.
+        let shown = if mode == Mode::Rename {
+            item.new_name.clone()
+        } else {
+            item.target.display().to_string()
+        };
         rows.push(FileRow {
             index: i as i32,
             old_name: name_of(&item.from).into(),
-            new_name: if state == 0 { SharedString::new() } else { item.new_name.as_str().into() },
+            new_name: if state == 0 { SharedString::new() } else { shown.into() },
             dir: item.from.parent().map(|p| p.display().to_string()).unwrap_or_default().into(),
             status: status.into(),
             state,
         });
     }
-    Computed { rows, plan, changed, errors }
+    Computed { rows, plan, mode, changed, errors }
 }
 
 fn refresh(ui: &MainWindow, s: &State) {
