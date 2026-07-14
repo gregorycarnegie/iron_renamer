@@ -1,7 +1,7 @@
 // Iron Renamer — forge-industrial theme.
 // Deep steel darks, molten amber accent, monospace filenames, live preview.
 
-import { ListView, TextEdit } from "std-widgets.slint";
+import { ListView, TextEdit, ScrollView } from "std-widgets.slint";
 
 export struct FileRow {
     index: int,
@@ -92,7 +92,7 @@ component ToolButton inherits Rectangle {
     in property <string> label;
     in property <bool> danger: false;
     callback clicked();
-    height: 30px;
+    height: 26px;
     border-radius: 5px;
     background: ta.has-hover ? (danger ? #ff625915 : Palette.line-soft) : transparent;
     border-width: 1px;
@@ -101,7 +101,7 @@ component ToolButton inherits Rectangle {
     Text {
         text: root.label;
         color: root.danger ? Palette.error : Palette.text;
-        font-size: 12px;
+        font-size: 11px;
         horizontal-alignment: center;
         vertical-alignment: center;
         width: 100%;
@@ -256,15 +256,16 @@ export component MainWindow inherits Window {
                     background: Palette.forge;
                     drop-shadow-blur: 18px;
                     drop-shadow-color: #ff5c3855;
-                    Text {
-                        text: "IR";
-                        color: #17110b;
-                        font-size: 15px;
-                        font-weight: 900;
-                        width: 100%;
-                        height: 100%;
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
+                    // anvil mark
+                    Path {
+                        x: 5px;
+                        y: 8px;
+                        width: 24px;
+                        height: 19px;
+                        viewbox-width: 24;
+                        viewbox-height: 19;
+                        commands: "M 7 2 L 24 2 L 24 8 L 7 8 C 4 8 1.5 6.5 0 5 C 1.5 3.5 4 2.5 7 2 Z M 12 8 L 19 8 L 18 12 L 21 12 L 23 15 L 23 17 L 8 17 L 8 15 L 10 12 L 13 12 Z";
+                        fill: #17110b;
                     }
                 }
                 VerticalLayout {
@@ -307,9 +308,15 @@ export component MainWindow inherits Window {
             Rectangle {
                 width: 296px;
                 background: Palette.panel;
-                Rectangle { x: parent.width - 1px; width: 1px; background: Palette.line-soft; }
 
-                VerticalLayout {
+                // Whole rail scrolls so nothing clips at small window sizes;
+                // pinned to at least the visible height so OUTPUT stays at the bottom.
+                sv := ScrollView {
+                    width: 100%;
+                    height: 100%;
+                rail := VerticalLayout {
+                    width: sv.visible-width;
+                    height: max(sv.visible-height, self.min-height);
                     padding: 16px;
                     spacing: 10px;
 
@@ -603,7 +610,14 @@ export component MainWindow inherits Window {
                         font-size: 12px;
                     }
 
-                    for rule[i] in root.rules : Rectangle {
+                    // Scrolls on its own past 5 rules so OUTPUT stays reachable.
+                    if root.rules.length > 0 : ListView {
+                        height: min(root.rules.length, 5) * 44px;
+                        for rule[i] in root.rules : Rectangle {
+                        height: 44px;
+                        Rectangle {
+                        y: 0;
+                        width: parent.width;
                         height: 40px;
                         border-radius: 6px;
                         background: Palette.inset;
@@ -641,6 +655,8 @@ export component MainWindow inherits Window {
                                     MiniButton { glyph: "×"; danger: true; clicked => { root.remove_rule(i); } }
                                 }
                             }
+                        }
+                        }
                         }
                     }
 
@@ -702,6 +718,8 @@ export component MainWindow inherits Window {
                         }
                     }
                 }
+                }
+                Rectangle { x: parent.width - 1px; width: 1px; background: Palette.line-soft; }
             }
 
             // ───────────────────────── right: file table
@@ -710,7 +728,7 @@ export component MainWindow inherits Window {
                 spacing: 0;
 
                 Rectangle {
-                    height: 132px;
+                    height: 122px;
                     VerticalLayout {
                         padding-left: 16px;
                         padding-right: 16px;
@@ -718,17 +736,17 @@ export component MainWindow inherits Window {
                         padding-bottom: 10px;
                         spacing: 8px;
                         HorizontalLayout {
-                            spacing: 8px;
-                            height: 30px;
-                            ToolButton { label: "＋ Files";  width: 84px;  clicked => { root.pick_files(); } }
-                            ToolButton { label: "＋ From folder"; width: 112px; clicked => { root.pick_folder(); } }
-                            ToolButton { label: "＋ Folders"; width: 92px; clicked => { root.pick_dirs(); } }
-                            ToolButton { label: "Clear"; danger: true; width: 64px; clicked => { root.clear_files(); } }
+                            spacing: 6px;
+                            height: 26px;
+                            ToolButton { label: "＋ Files";  width: 72px;  clicked => { root.pick_files(); } }
+                            ToolButton { label: "＋ From folder"; width: 102px; clicked => { root.pick_folder(); } }
+                            ToolButton { label: "＋ Folders"; width: 84px; clicked => { root.pick_dirs(); } }
+                            ToolButton { label: "Clear"; danger: true; width: 54px; clicked => { root.clear_files(); } }
                             Rectangle { horizontal-stretch: 1; }
-                            ToolButton { label: "Import CSV"; width: 94px; clicked => { root.import_csv(); } }
-                            ToolButton { label: "Export"; width: 68px; clicked => { root.export_preview(); } }
-                            ToolButton { label: "Save list"; width: 80px; clicked => { root.save_list(); } }
-                            ToolButton { label: "Load list"; width: 80px; clicked => { root.load_list(); } }
+                            ToolButton { label: "Import CSV"; width: 84px; clicked => { root.import_csv(); } }
+                            ToolButton { label: "Export"; width: 60px; clicked => { root.export_preview(); } }
+                            ToolButton { label: "Save list"; width: 72px; clicked => { root.save_list(); } }
+                            ToolButton { label: "Load list"; width: 72px; clicked => { root.load_list(); } }
                         }
                         HorizontalLayout {
                             spacing: 8px;
@@ -784,9 +802,9 @@ export component MainWindow inherits Window {
                                 text <=> root.override_text;
                                 edited => { root.set_override(); }
                             }
-                            ToolButton { label: "▲"; width: 34px; clicked => { root.move_selected(-1); } }
-                            ToolButton { label: "▼"; width: 34px; clicked => { root.move_selected(1); } }
-                            ToolButton { label: "Remove"; danger: true; width: 76px; clicked => { root.remove_selected(); } }
+                            ToolButton { label: "▲"; width: 34px; height: 30px; clicked => { root.move_selected(-1); } }
+                            ToolButton { label: "▼"; width: 34px; height: 30px; clicked => { root.move_selected(1); } }
+                            ToolButton { label: "Remove"; danger: true; width: 70px; height: 30px; clicked => { root.remove_selected(); } }
                         }
                     }
                     Rectangle { y: parent.height - 1px; height: 1px; background: Palette.line-soft; }
