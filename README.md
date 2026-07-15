@@ -133,12 +133,13 @@ Windows names like `CON`, trailing dots/spaces, over-long paths); case-only
 renames are allowed. Chains (`1→2, 2→3`) are ordered automatically and swap
 cycles are broken with temporary names. A failed item leaves its file
 untouched — re-run the same command to retry. Applied batches are appended to
-`%LOCALAPPDATA%\iron_renamer\history.tsv` for `history`/`undo`.
+`%LOCALAPPDATA%\iron_renamer\history.tsv` (`~/.iron_renamer/history.tsv` on
+Linux/macOS) for `history`/`undo`.
 
 ## Build
 
 ```
-cargo build --release        # -> target/release/iron_renamer.exe
+cargo build --release        # -> target/release/iron_renamer(.exe)
 cargo test
 ```
 

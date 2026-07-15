@@ -8,13 +8,35 @@ permissions:
   contents: write
 
 jobs:
-  release:
-    runs-on: windows-latest
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            pack: Compress-Archive target/release/iron_renamer.exe iron_renamer-windows-x86_64.zip
+          - os: ubuntu-latest
+            pack: tar czf iron_renamer-linux-x86_64.tar.gz -C target/release iron_renamer
+          - os: macos-latest
+            pack: tar czf iron_renamer-macos-aarch64.tar.gz -C target/release iron_renamer
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo build --release --locked
-      - run: Compress-Archive target/release/iron_renamer.exe iron_renamer-windows-x86_64.zip
-      - run: gh release create $env:GITHUB_REF_NAME iron_renamer-windows-x86_64.zip --generate-notes --verify-tag
+      - run: ${{ matrix.pack }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.os }}
+          path: iron_renamer-*
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - run: gh release create "$GITHUB_REF_NAME" iron_renamer-* --generate-notes --verify-tag
         env:
           GH_TOKEN: ${{ github.token }}

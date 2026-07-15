@@ -25,6 +25,7 @@ fn tool() -> Option<&'static PathBuf> {
 }
 
 fn cmd(tool: &Path) -> Command {
+    #[cfg_attr(not(windows), allow(unused_mut))]
     let mut c = Command::new(tool);
     #[cfg(windows)]
     {

@@ -33,12 +33,18 @@ pub fn parse_touch(s: &str) -> Result<TouchSpec, String> {
         accessed: false,
         value: TouchValue::Delta(0),
     };
+    // Creation time is only settable on Windows and macOS; "all" quietly
+    // skips it elsewhere, an explicit "created" fails at parse time.
+    const CREATED_OK: bool = cfg!(any(windows, target_os = "macos"));
     for w in which.split(',').map(str::trim) {
         match w {
+            "created" if !CREATED_OK => {
+                return Err("creation time is not settable on this OS".into());
+            }
             "created" => spec.created = true,
             "modified" => spec.modified = true,
             "accessed" => spec.accessed = true,
-            "all" => (spec.created, spec.modified, spec.accessed) = (true, true, true),
+            "all" => (spec.created, spec.modified, spec.accessed) = (CREATED_OK, true, true),
             other => {
                 return Err(format!(
                     "unknown timestamp field '{other}' (created|modified|accessed|all)"
@@ -136,9 +142,12 @@ fn touch_one(p: &Path, spec: &TouchSpec) -> Result<bool, String> {
     if spec.accessed {
         times = times.set_accessed(field(md.accessed())?);
     }
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "macos"))]
     if spec.created {
+        #[cfg(windows)]
         use std::os::windows::fs::FileTimesExt;
+        #[cfg(target_os = "macos")]
+        use std::os::macos::fs::FileTimesExt;
         times = times.set_created(field(md.created())?);
     }
     let f = fs::File::options()
