@@ -275,7 +275,7 @@ fn plan_copy_move_destinations() {
     // Tag-expanded relative destination: sorted/<ext>.
     let cfg = BatchCfg {
         mode: Mode::Copy,
-        dest: "sorted\\<ext>",
+        dest: "sorted/<ext>",
         ..BatchCfg::rename(&[], 1, 1, &none)
     };
     let items = plan(&files, &cfg);
@@ -326,8 +326,13 @@ fn touch_parses_and_sets_times() {
     assert!(parse_touch("no-equals").is_err());
     assert!(parse_touch("bogus=+1h").is_err());
     assert!(parse_touch("modified=junk").is_err());
-    let spec = parse_touch("created,accessed=+1h").unwrap();
-    assert!(spec.created && spec.accessed && !spec.modified);
+    let spec = parse_touch("created,accessed=+1h");
+    if cfg!(any(windows, target_os = "macos")) {
+        let spec = spec.unwrap();
+        assert!(spec.created && spec.accessed && !spec.modified);
+    } else {
+        assert!(spec.is_err());
+    }
 
     let secs_of = |p: &Path| {
         fs::metadata(p)
