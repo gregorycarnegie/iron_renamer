@@ -378,13 +378,6 @@ pub fn run(args: Vec<String>) {
         from_list = true;
     }
 
-    let apply = cli.apply;
-    let dirs = cli.dirs;
-    let export = cli.export;
-    let sort = cli.sort;
-    let desc = cli.desc;
-    let pairs = cli.pairs;
-
     for a in &cli.set_meta {
         if !a.contains('=') {
             die(&format!("--set-meta '{a}' must be TAG=VALUE"));
@@ -394,7 +387,7 @@ pub fn run(args: Vec<String>) {
         die("no rules given (see --help)");
     }
     if files.is_empty() {
-        die(if dirs {
+        die(if cli.dirs {
             "no folders matched"
         } else {
             "no files matched"
@@ -403,26 +396,26 @@ pub fn run(args: Vec<String>) {
 
     // One batch never mixes files and folders.
     for f in &files {
-        if dirs && !f.is_dir() {
+        if cli.dirs && !f.is_dir() {
             die(&format!(
                 "'{}' is not a folder (drop --dirs to rename files)",
                 f.display()
             ));
         }
-        if !dirs && f.is_dir() {
+        if !cli.dirs && f.is_dir() {
             die(&format!(
                 "'{}' is a folder (use --dirs to rename folders)",
                 f.display()
             ));
         }
-        if !dirs && !f.is_file() {
+        if !cli.dirs && !f.is_file() {
             die(&format!("'{}' not found", f.display()));
         }
     }
 
     // Natural name sort by default so photo_9 numbers before photo_10;
     // a --list keeps its own order unless a sort is asked for.
-    let sort = sort.unwrap_or_else(|| {
+    let sort = cli.sort.unwrap_or_else(|| {
         if from_list {
             "none".into()
         } else {
@@ -430,7 +423,7 @@ pub fn run(args: Vec<String>) {
         }
     });
     sort_files(&mut files, &sort);
-    if desc {
+    if cli.desc {
         files.reverse();
     }
     let mut seen = std::collections::HashSet::new();
@@ -455,12 +448,12 @@ pub fn run(args: Vec<String>) {
         mode,
         dest: &dest,
         collision,
-        pairs,
+        pairs: cli.pairs,
     };
     let items = batch::plan(&files, &cfg);
     // With --apply the export becomes a result log, written after execution.
-    if let Some(path) = &export
-        && !apply
+    if let Some(path) = &cli.export
+        && !cli.apply
     {
         match batch::export_preview(&items, path) {
             Ok(_) => println!("preview exported to {}", path.display()),
@@ -498,7 +491,7 @@ pub fn run(args: Vec<String>) {
         return;
     }
 
-    if !apply {
+    if !cli.apply {
         println!(
             "\npreview only — re-run with --apply to {verb} {} item(s)",
             ops.len()
@@ -528,7 +521,7 @@ pub fn run(args: Vec<String>) {
     for (op, e) in &res.failed {
         eprintln!("FAILED {} -> {}: {e}", op.from.display(), op.to.display());
     }
-    if let Some(path) = &export {
+    if let Some(path) = &cli.export {
         match batch::export_results(&res, path) {
             Ok(_) => println!("result log written to {}", path.display()),
             Err(e) => eprintln!("warning: could not write result log: {e}"),
@@ -799,5 +792,16 @@ mod tests {
                 RuleEvent::Condition { .. }
             ] if mods == &["ci", "first"]
         ));
+    }
+
+    #[test]
+    fn clap_rejects_invalid_and_conflicting_options() {
+        for args in [
+            vec!["iron_renamer", "--sort", "random"],
+            vec!["iron_renamer", "--copy-to", "a", "--move-to", "b"],
+            vec!["iron_renamer", "undo", "not-a-number"],
+        ] {
+            assert!(Cli::command().try_get_matches_from(args).is_err());
+        }
     }
 }

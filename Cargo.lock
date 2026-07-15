@@ -2825,7 +2825,7 @@ dependencies = [
 
 [[package]]
 name = "iron_renamer"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "boa_engine",
  "clap",

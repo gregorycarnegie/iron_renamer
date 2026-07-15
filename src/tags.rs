@@ -222,8 +222,7 @@ fn sanitize(v: &str) -> String {
         .chars()
         .filter_map(|c| match c {
             ':' => Some('-'),
-            '<' | '>' | '"' | '/' | '\\' | '|' | '?' | '*' => None,
-            c if (c as u32) < 0x20 => None,
+            c if crate::batch::INVALID_CHARS.contains(&c) || (c as u32) < 0x20 => None,
             c => Some(c),
         })
         .collect();
@@ -711,7 +710,10 @@ mod tests {
         // out of range gives "" so |fallback applies
         assert_eq!(expand("<name|split:-,9|fallback:x>", "a-b.jpg", &c), "x");
         // N = 0 or missing N leaves the tag literal
-        assert_eq!(expand("<name|split:-,0>", "a-b.jpg", &c), "<name|split:-,0>");
+        assert_eq!(
+            expand("<name|split:-,0>", "a-b.jpg", &c),
+            "<name|split:-,0>"
+        );
         assert_eq!(expand("<name|split:->", "a-b.jpg", &c), "<name|split:->");
     }
 

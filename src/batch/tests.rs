@@ -348,19 +348,19 @@ fn touch_parses_and_sets_times() {
 
     // Absolute (UTC).
     let spec = parse_touch("modified=2024-05-01 10:30").unwrap();
-    let (n, errs) = apply_touch(&[f.clone()], &spec);
+    let (n, errs) = apply_touch(std::slice::from_ref(&f), &spec);
     assert_eq!((n, errs.len()), (1, 0));
     let expected = crate::tags::epoch_from_civil(2024, 5, 1, 10, 30, 0);
     assert_eq!(secs_of(&f), expected);
 
     // Delta shifts the current value.
     let spec = parse_touch("modified=+1h").unwrap();
-    apply_touch(&[f.clone()], &spec);
+    apply_touch(std::slice::from_ref(&f), &spec);
     assert_eq!(secs_of(&f), expected + 3600);
 
     // From the file name.
     let spec = parse_touch("modified=name").unwrap();
-    apply_touch(&[f.clone()], &spec);
+    apply_touch(std::slice::from_ref(&f), &spec);
     assert_eq!(
         secs_of(&f),
         crate::tags::epoch_from_civil(2024, 5, 1, 12, 30, 0)
@@ -369,7 +369,7 @@ fn touch_parses_and_sets_times() {
     // No date in the name: skipped, not an error.
     let plain = put(&d, "plain.txt", "x");
     let before = secs_of(&plain);
-    let (n, errs) = apply_touch(&[plain.clone()], &spec);
+    let (n, errs) = apply_touch(std::slice::from_ref(&plain), &spec);
     assert_eq!((n, errs.len()), (0, 0));
     assert_eq!(secs_of(&plain), before);
 }

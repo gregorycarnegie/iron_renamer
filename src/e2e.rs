@@ -113,7 +113,8 @@ fn full_flow_preview_chain_collision_undo() {
 /// and extensionless files.
 #[test]
 fn rules_on_awkward_names() {
-    let cases: &[(&str, &[&str], &str, &str, &str, &str)] = &[
+    type Case<'a> = (&'a str, &'a [&'a str], &'a str, &'a str, &'a str, &'a str);
+    let cases: &[Case<'_>] = &[
         // (kind, mods, a, b, input, expected)
         ("replace", &[], "é", "e", "café.txt", "cafe.txt"),
         ("replace", &["ci"], "CAFÉ", "x", "café.txt", "x.txt"),

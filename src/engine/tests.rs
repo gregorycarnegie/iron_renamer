@@ -334,7 +334,7 @@ fn pattern_uses_shared_tags() {
 #[test]
 fn natural_sort_and_glob() {
     let mut v = vec!["img10.jpg", "img9.jpg", "img1.jpg"];
-    v.sort_by(|a, b| natural_key(a).cmp(&natural_key(b)));
+    v.sort_by_key(|a| natural_key(a));
     assert_eq!(v, vec!["img1.jpg", "img9.jpg", "img10.jpg"]);
     assert!(wild_match("*.jpg", "photo.jpg"));
     assert!(wild_match("img?.png", "img1.png"));
@@ -367,7 +367,12 @@ fn js_rule_sandboxed_eval() {
         "undefined-undefined"
     );
     // Script globals persist across items until reset_js (pre-batch state).
-    let e = entry("js", &["name"], "if (typeof n == 'undefined') n = 0; n += 1; stem + n", "");
+    let e = entry(
+        "js",
+        &["name"],
+        "if (typeof n == 'undefined') n = 0; n += 1; stem + n",
+        "",
+    );
     assert_eq!(run(&e, "a.jpg"), "a1.jpg");
     assert_eq!(run(&e, "a.jpg"), "a2.jpg");
     reset_js();

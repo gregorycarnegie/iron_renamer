@@ -7,8 +7,8 @@ mod apply;
 mod files;
 mod parse;
 
-pub(crate) use apply::{change_case, join_ext};
 pub use apply::{apply_entry, reset_js, split_ext};
+pub(crate) use apply::{change_case, join_ext};
 #[cfg(test)]
 use files::wild_match;
 pub use files::{Masks, collect_dir, expand, name_of, natural_key, sort_files};

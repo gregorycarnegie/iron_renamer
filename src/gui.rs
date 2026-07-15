@@ -94,6 +94,97 @@ fn add_files(s: &mut State, mut paths: Vec<PathBuf>) {
     }
 }
 
+// Point list entries at their post-batch locations; consumed (or stale,
+// after undo) overrides go with them.
+fn retarget(s: &mut State, ops: &[Op]) {
+    for op in ops {
+        if let Some(f) = s.files.iter_mut().find(|f| **f == op.from) {
+            *f = op.to.clone();
+        }
+        s.overrides.remove(&op.from);
+    }
+}
+
+// Drop a rule from the stack; the edit highlight follows or clears.
+fn remove_rule(s: &mut State, i: usize) {
+    if i < s.rules.len() {
+        s.rules.remove(i);
+        s.editing = match s.editing {
+            Some(e) if e == i => None,
+            Some(e) if e > i => Some(e - 1),
+            other => other,
+        };
+    }
+}
+
+// Swap two rules; the edit highlight follows the rule it belongs to.
+fn move_rule(s: &mut State, from: usize, to: isize) {
+    if from < s.rules.len() && to >= 0 && (to as usize) < s.rules.len() {
+        let to = to as usize;
+        s.rules.swap(from, to);
+        s.editing = match s.editing {
+            Some(e) if e == from => Some(to),
+            Some(e) if e == to => Some(from),
+            other => other,
+        };
+    }
+}
+
+// A saved list is one path per line; folders-only lists reload in folder
+// mode. Missing paths (or files in a folder list) are skipped and counted.
+fn parse_list(body: &str) -> (Vec<PathBuf>, bool, usize) {
+    let paths: Vec<PathBuf> = body
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .map(PathBuf::from)
+        .collect();
+    let total = paths.len();
+    let dirs_mode = !paths.is_empty() && paths.iter().all(|p| p.is_dir());
+    let keep: Vec<PathBuf> = paths
+        .into_iter()
+        .filter(|p| if dirs_mode { p.is_dir() } else { p.is_file() })
+        .collect();
+    let skipped = total - keep.len();
+    (keep, dirs_mode, skipped)
+}
+
+// CSV import: column 1 = existing file path, column 2 = optional manual
+// new name. Missing files (and thus any header row) are skipped and counted.
+fn parse_csv_import(body: &str) -> (Vec<PathBuf>, HashMap<PathBuf, String>, usize) {
+    let mut files = Vec::new();
+    let mut overrides = HashMap::new();
+    let mut skipped = 0;
+    for line in body.lines().filter(|l| !l.trim().is_empty()) {
+        let cols = crate::presets::csv_split(line);
+        let path = PathBuf::from(cols[0].trim());
+        if !path.is_file() {
+            skipped += 1;
+            continue;
+        }
+        if let Some(new) = cols.get(1).map(|c| c.trim()).filter(|c| !c.is_empty()) {
+            overrides.insert(path.clone(), new.to_string());
+        }
+        files.push(path);
+    }
+    (files, overrides, skipped)
+}
+
+// Preset rules become specs; unparsable ones are counted, not loaded.
+fn specs_from_preset(rules: Vec<(String, String, String, String)>) -> (Vec<RuleSpec>, usize) {
+    let mut specs = Vec::new();
+    let mut bad = 0;
+    for (kind, mods, a, b) in rules {
+        let spec = RuleSpec { kind, a, b, mods };
+        if spec.build().is_ok() {
+            specs.push(spec);
+        } else {
+            bad += 1;
+        }
+    }
+    (specs, bad)
+}
+
 // OS drag-and-drop: files add as files; a folder adds its contents with the
 // current mask/recurse settings, unless the list is already in folder mode.
 fn handle_drop(ui: &MainWindow, st: &Rc<RefCell<State>>, path: PathBuf) {
@@ -128,16 +219,7 @@ fn handle_drop(ui: &MainWindow, st: &Rc<RefCell<State>>, path: PathBuf) {
 fn apply_preset(ui: &MainWindow, st: &Rc<RefCell<State>>, p: &std::path::Path) {
     match crate::presets::load(p) {
         Ok(preset) => {
-            let mut specs = Vec::new();
-            let mut bad = 0;
-            for (kind, mods, a, b) in preset.rules {
-                let spec = RuleSpec { kind, a, b, mods };
-                if spec.build().is_ok() {
-                    specs.push(spec);
-                } else {
-                    bad += 1;
-                }
-            }
+            let (specs, bad) = specs_from_preset(preset.rules);
             let n = specs.len();
             {
                 let mut s = st.borrow_mut();
@@ -292,20 +374,7 @@ pub fn run(initial: Vec<PathBuf>) -> Result<(), slint::PlatformError> {
                 return;
             }
         };
-        let paths: Vec<PathBuf> = body
-            .lines()
-            .map(str::trim)
-            .filter(|l| !l.is_empty())
-            .map(PathBuf::from)
-            .collect();
-        let total = paths.len();
-        // A list is folders only if every line is one; otherwise keep the files.
-        let dirs_mode = !paths.is_empty() && paths.iter().all(|p| p.is_dir());
-        let keep: Vec<PathBuf> = paths
-            .into_iter()
-            .filter(|p| if dirs_mode { p.is_dir() } else { p.is_file() })
-            .collect();
-        let skipped = total - keep.len();
+        let (keep, dirs_mode, skipped) = parse_list(&body);
         let mut s = st.borrow_mut();
         s.files = keep;
         s.dirs = dirs_mode;
@@ -338,21 +407,7 @@ pub fn run(initial: Vec<PathBuf>) -> Result<(), slint::PlatformError> {
                 return;
             }
         };
-        let mut files = Vec::new();
-        let mut overrides = HashMap::new();
-        let mut skipped = 0;
-        for line in body.lines().filter(|l| !l.trim().is_empty()) {
-            let cols = crate::presets::csv_split(line);
-            let path = PathBuf::from(cols[0].trim());
-            if !path.is_file() {
-                skipped += 1; // also skips a header row
-                continue;
-            }
-            if let Some(new) = cols.get(1).map(|c| c.trim()).filter(|c| !c.is_empty()) {
-                overrides.insert(path.clone(), new.to_string());
-            }
-            files.push(path);
-        }
+        let (files, overrides, skipped) = parse_csv_import(&body);
         let n = files.len();
         let mut s = st.borrow_mut();
         s.files = files;
@@ -621,42 +676,16 @@ pub fn run(initial: Vec<PathBuf>) -> Result<(), slint::PlatformError> {
 
     on!(on_remove_rule, |ui, st, i: i32| {
         let mut s = st.borrow_mut();
-        if (i as usize) < s.rules.len() {
-            s.rules.remove(i as usize);
-            match s.editing {
-                Some(e) if e == i as usize => {
-                    s.editing = None;
-                    ui.set_editing_rule(-1);
-                }
-                Some(e) if e > i as usize => {
-                    s.editing = Some(e - 1);
-                    ui.set_editing_rule((e - 1) as i32);
-                }
-                _ => {}
-            }
-        }
+        remove_rule(&mut s, i as usize);
+        ui.set_editing_rule(s.editing.map_or(-1, |e| e as i32));
         drop(s);
         refresh(&ui, &st.borrow());
     });
 
     on!(on_move_rule, |ui, st, from: i32, to: i32| {
         let mut s = st.borrow_mut();
-        let (from, to) = (from as usize, to as isize);
-        if from < s.rules.len() && to >= 0 && (to as usize) < s.rules.len() {
-            s.rules.swap(from, to as usize);
-            // The edit highlight follows the rule it belongs to.
-            match s.editing {
-                Some(e) if e == from => {
-                    s.editing = Some(to as usize);
-                    ui.set_editing_rule(to as i32);
-                }
-                Some(e) if e == to as usize => {
-                    s.editing = Some(from);
-                    ui.set_editing_rule(from as i32);
-                }
-                _ => {}
-            }
-        }
+        move_rule(&mut s, from as usize, to as isize);
+        ui.set_editing_rule(s.editing.map_or(-1, |e| e as i32));
         drop(s);
         refresh(&ui, &st.borrow());
     });
@@ -737,12 +766,7 @@ pub fn run(initial: Vec<PathBuf>) -> Result<(), slint::PlatformError> {
                 warn = format!(" · history not written: {e}");
             }
             let mut s = st.borrow_mut();
-            for op in &res.renamed {
-                if let Some(f) = s.files.iter_mut().find(|f| **f == op.from) {
-                    *f = op.to.clone();
-                }
-                s.overrides.remove(&op.from); // override served its purpose
-            }
+            retarget(&mut s, &res.renamed);
             if !res.renamed.is_empty() {
                 s.can_undo = true;
             }
@@ -764,13 +788,7 @@ pub fn run(initial: Vec<PathBuf>) -> Result<(), slint::PlatformError> {
         // Reverts the most recent batch from persisted history, chains/swaps included.
         let msg = match batch::undo(None) {
             Ok((reverted, errors)) => {
-                let mut s = st.borrow_mut();
-                for op in &reverted {
-                    if let Some(f) = s.files.iter_mut().find(|f| **f == op.from) {
-                        *f = op.to.clone();
-                    }
-                }
-                drop(s);
+                retarget(&mut st.borrow_mut(), &reverted);
                 match errors.len() {
                     0 => format!("reverted {} item(s)", reverted.len()),
                     n => format!(
@@ -787,7 +805,9 @@ pub fn run(initial: Vec<PathBuf>) -> Result<(), slint::PlatformError> {
     });
 
     for p in initial {
-        if p.extension().is_some_and(|e| e.eq_ignore_ascii_case("preset")) {
+        if p.extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("preset"))
+        {
             apply_preset(&ui, &state, &p);
         } else {
             handle_drop(&ui, &state, p);
@@ -932,4 +952,152 @@ fn refresh(ui: &MainWindow, s: &State) {
         )
         .into(),
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gui_state_adds_naturally_sorted_unique_files() {
+        let mut state = State {
+            files: vec!["kept.txt".into()],
+            ..State::default()
+        };
+        add_files(
+            &mut state,
+            ["item10.txt", "item2.txt", "kept.txt"]
+                .map(PathBuf::from)
+                .to_vec(),
+        );
+
+        assert_eq!(
+            state.files,
+            ["kept.txt", "item2.txt", "item10.txt"].map(PathBuf::from)
+        );
+    }
+
+    #[test]
+    fn gui_rule_spec_builds_cli_compatible_modifiers() {
+        let spec = RuleSpec {
+            kind: "replace".into(),
+            a: "old".into(),
+            b: "new".into(),
+            mods: "name:ci:first".into(),
+        };
+
+        assert!(spec.build().is_ok());
+        assert_eq!(spec.summary(), "\"old\" → \"new\" [name:ci:first]");
+    }
+
+    fn spec(kind: &str, a: &str, b: &str) -> RuleSpec {
+        RuleSpec {
+            kind: kind.into(),
+            a: a.into(),
+            b: b.into(),
+            mods: String::new(),
+        }
+    }
+
+    #[test]
+    fn gui_rule_summaries_per_kind() {
+        for (s, expected) in [
+            (spec("regex", r"\d+", "n"), r#"/\d+/ → "n""#),
+            (spec("insert", "x", ""), "\"x\" @ end"),
+            (spec("names", "a\nb\nc", ""), "3 name(s)"),
+            (spec("trim", "", ""), "whitespace"),
+            (spec("case", "upper", ""), "upper"),
+        ] {
+            assert_eq!(s.summary(), expected);
+        }
+    }
+
+    fn tmpdir(name: &str) -> PathBuf {
+        let d =
+            std::env::temp_dir().join(format!("iron_renamer_gui_{name}_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&d);
+        fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn list_load_keeps_existing_files_and_detects_folder_mode() {
+        let d = tmpdir("list");
+        let f = d.join("a.txt");
+        fs::write(&f, "x").unwrap();
+
+        let body = format!("{}\n\n{}\n", f.display(), d.join("missing.txt").display());
+        let (keep, dirs_mode, skipped) = parse_list(&body);
+        assert_eq!((keep, dirs_mode, skipped), (vec![f], false, 1));
+
+        // Every line a folder -> folder mode.
+        let (keep, dirs_mode, skipped) = parse_list(&format!("{}\n", d.display()));
+        assert_eq!((keep, dirs_mode, skipped), (vec![d], true, 0));
+    }
+
+    #[test]
+    fn csv_import_reads_overrides_and_skips_header() {
+        let d = tmpdir("csv");
+        let f = d.join("a.txt");
+        fs::write(&f, "x").unwrap();
+
+        let body = format!("path,new name\n{},renamed.txt\n", f.display());
+        let (files, overrides, skipped) = parse_csv_import(&body);
+        assert_eq!((files, skipped), (vec![f.clone()], 1));
+        assert_eq!(overrides[&f], "renamed.txt");
+    }
+
+    #[test]
+    fn preset_rules_load_and_bad_ones_are_counted() {
+        let (specs, bad) = specs_from_preset(vec![
+            ("replace".into(), "ci".into(), "a".into(), "b".into()),
+            ("regex".into(), String::new(), "[".into(), String::new()), // bad regex
+        ]);
+        assert_eq!((specs.len(), bad), (1, 1));
+        assert_eq!(specs[0].kind, "replace");
+    }
+
+    #[test]
+    fn retarget_follows_renames_and_drops_consumed_overrides() {
+        let mut state = State {
+            files: vec!["a.txt".into(), "b.txt".into()],
+            overrides: HashMap::from([("a.txt".into(), "manual".into())]),
+            ..State::default()
+        };
+        retarget(
+            &mut state,
+            &[Op {
+                from: "a.txt".into(),
+                to: "z.txt".into(),
+            }],
+        );
+        assert_eq!(state.files, ["z.txt", "b.txt"].map(PathBuf::from));
+        assert!(state.overrides.is_empty());
+    }
+
+    #[test]
+    fn rule_stack_edit_highlight_follows_remove_and_move() {
+        let mut state = State {
+            rules: vec![
+                spec("case", "upper", ""),
+                spec("trim", "", ""),
+                spec("swap", "-", ""),
+            ],
+            editing: Some(1),
+            ..State::default()
+        };
+
+        remove_rule(&mut state, 0); // rule before the edited one -> index shifts
+        assert_eq!((state.rules.len(), state.editing), (2, Some(0)));
+
+        move_rule(&mut state, 0, 1); // edited rule moves -> highlight follows
+        assert_eq!(state.editing, Some(1));
+        assert_eq!(state.rules[1].kind, "trim");
+
+        move_rule(&mut state, 0, 5); // out of range -> no-op
+        assert_eq!(state.editing, Some(1));
+
+        remove_rule(&mut state, 1); // the edited rule itself -> highlight clears
+        assert_eq!((state.rules.len(), state.editing), (1, None));
+    }
 }

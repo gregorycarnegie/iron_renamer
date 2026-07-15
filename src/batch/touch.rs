@@ -144,10 +144,10 @@ fn touch_one(p: &Path, spec: &TouchSpec) -> Result<bool, String> {
     }
     #[cfg(any(windows, target_os = "macos"))]
     if spec.created {
-        #[cfg(windows)]
-        use std::os::windows::fs::FileTimesExt;
         #[cfg(target_os = "macos")]
         use std::os::macos::fs::FileTimesExt;
+        #[cfg(windows)]
+        use std::os::windows::fs::FileTimesExt;
         times = times.set_created(field(md.created())?);
     }
     let f = fs::File::options()

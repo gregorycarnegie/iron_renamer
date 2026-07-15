@@ -129,13 +129,17 @@ fn reserved(name: &str) -> bool {
             && matches!(s.as_bytes()[3], b'1'..=b'9'))
 }
 
+/// Characters Windows forbids in file names (shared with tag sanitizing).
+pub(crate) const INVALID_CHARS: [char; 9] = ['<', '>', ':', '"', '/', '\\', '|', '?', '*'];
+
 pub fn name_issue(name: &str) -> Option<String> {
     if name.is_empty() {
         return Some("empty name".into());
     }
-    if let Some(c) = name.chars().find(|c| {
-        matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*') || (*c as u32) < 0x20
-    }) {
+    if let Some(c) = name
+        .chars()
+        .find(|c| INVALID_CHARS.contains(c) || (*c as u32) < 0x20)
+    {
         return Some(format!("invalid character '{}'", c.escape_default()));
     }
     if name.ends_with('.') || name.ends_with(' ') {
