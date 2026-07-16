@@ -319,7 +319,10 @@ pub fn run(initial: Vec<PathBuf>) -> Result<(), slint::PlatformError> {
         ui.on_win_drag(move || {
             let ui = weak.unwrap();
             let w = ui.window();
-            if last_press.get().is_some_and(|t| t.elapsed().as_millis() < 400) {
+            if last_press
+                .get()
+                .is_some_and(|t| t.elapsed().as_millis() < 400)
+            {
                 last_press.set(None);
                 w.set_maximized(!w.is_maximized());
             } else if !w.is_maximized() {
