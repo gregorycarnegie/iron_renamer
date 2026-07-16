@@ -159,9 +159,9 @@ export component MainWindow inherits Window {
     in-out property <string> field_b: "";
     in-out property <string> case_mode: "lower";
     in-out property <string> apply_part: "both";
-    in-out property <bool> replace_ci: false;
+    in-out property <bool> replace_cs: false;
     in-out property <string> replace_occ: "all";
-    in-out property <bool> pairs_ci: false;
+    in-out property <bool> pairs_cs: false;
     in-out property <string> trim_at: "both";
     in-out property <bool> trim_inv: false;
     in-out property <string> start_text: "1";
@@ -369,7 +369,7 @@ export component MainWindow inherits Window {
 
                     if root.new_kind == "replace" : HorizontalLayout {
                         spacing: 6px;
-                        Chip { label: "Aa";    active: root.replace_ci;           clicked => { root.replace_ci = !root.replace_ci; } }
+                        Chip { label: "Aa";    active: root.replace_cs;           clicked => { root.replace_cs = !root.replace_cs; } }
                         Chip { label: "all";   active: root.replace_occ == "all";   clicked => { root.replace_occ = "all"; } }
                         Chip { label: "first"; active: root.replace_occ == "first"; clicked => { root.replace_occ = "first"; } }
                         Chip { label: "last";  active: root.replace_occ == "last";  clicked => { root.replace_occ = "last"; } }
@@ -506,7 +506,7 @@ export component MainWindow inherits Window {
                         }
                         HorizontalLayout {
                             spacing: 6px;
-                            Chip { label: "Aa"; active: root.pairs_ci; clicked => { root.pairs_ci = !root.pairs_ci; } }
+                            Chip { label: "Aa"; active: root.pairs_cs; clicked => { root.pairs_cs = !root.pairs_cs; } }
                             Text {
                                 text: "one OLD=NEW per line (tags ok in NEW)";
                                 color: Palette.faint;

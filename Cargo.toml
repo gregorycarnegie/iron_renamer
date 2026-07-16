@@ -8,12 +8,12 @@ license = "MIT"
 # Sandboxed JS rules; no IO exposed by design. 0.20 pinned: 0.21 wants
 # icu_normalizer ~2.0, which clashes with slint/parley's ^2.1.
 boa_engine = "0.20"
-clap = { version = "4.6.1", features = ["derive"] }
+clap = { version = "4.6.2", features = ["derive"] }
 crc32fast = "1.5.0"
 # Zero-dependency hash tags <md5> and <sha1>.
 md5 = "0.8.1"
 sha1_smol = "1.0.1"
-regex = "1.13.0"
+regex = "1.13.1"
 slint = { version = "1.17.1", default-features = false, features = ["accessibility", "compat-1-2", "renderer-femtovg", "std", "unstable-winit-030"] } # winit feature: OS file drag-and-drop
 rfd = "0.17.2"
 

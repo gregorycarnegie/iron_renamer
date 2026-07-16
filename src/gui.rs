@@ -5,7 +5,13 @@ use crate::{
     engine::{Masks, RuleEntry, build_rule, collect_dir, name_of, natural_key, sort_files},
 };
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
-use std::{cell::RefCell, collections::HashMap, fs, path::PathBuf, rc::Rc};
+use std::{
+    cell::RefCell,
+    collections::HashMap,
+    fs,
+    path::{Path, PathBuf},
+    rc::Rc,
+};
 
 slint::include_modules!();
 
@@ -216,7 +222,7 @@ fn handle_drop(ui: &MainWindow, st: &Rc<RefCell<State>>, path: PathBuf) {
 
 // Load a preset file into the rule list and settings (Load-preset button,
 // initial .preset argument, or .preset file association).
-fn apply_preset(ui: &MainWindow, st: &Rc<RefCell<State>>, p: &std::path::Path) {
+fn apply_preset(ui: &MainWindow, st: &Rc<RefCell<State>>, p: &Path) {
     match crate::presets::load(p) {
         Ok(preset) => {
             let (specs, bad) = specs_from_preset(preset.rules);
@@ -251,6 +257,12 @@ fn apply_preset(ui: &MainWindow, st: &Rc<RefCell<State>>, p: &std::path::Path) {
 /// `initial` paths (from the Explorer context menu or `iron_renamer gui`)
 /// load as if dropped on the window; a .preset file loads as a preset.
 pub fn run(initial: Vec<PathBuf>) -> Result<(), slint::PlatformError> {
+    // Dark native title bar to match the app (must be hooked before window creation).
+    slint::BackendSelector::new()
+        .with_winit_window_attributes_hook(|attrs| {
+            attrs.with_theme(Some(slint::winit_030::winit::window::Theme::Dark))
+        })
+        .select()?;
     let ui = MainWindow::new()?;
     let state = Rc::new(RefCell::new(State::default()));
     state.borrow_mut().can_undo = !batch::history().is_empty();
@@ -577,7 +589,7 @@ pub fn run(initial: Vec<PathBuf>) -> Result<(), slint::PlatformError> {
         }
         match kind.as_str() {
             "replace" => {
-                if ui.get_replace_ci() {
+                if !ui.get_replace_cs() {
                     mods.push("ci".into());
                 }
                 let occ = ui.get_replace_occ().to_string();
@@ -594,7 +606,7 @@ pub fn run(initial: Vec<PathBuf>) -> Result<(), slint::PlatformError> {
                     mods.push("inv".into());
                 }
             }
-            "pairs" if ui.get_pairs_ci() => mods.push("ci".into()),
+            "pairs" if !ui.get_pairs_cs() => mods.push("ci".into()),
             _ => {}
         }
         let spec = RuleSpec {
@@ -639,17 +651,18 @@ pub fn run(initial: Vec<PathBuf>) -> Result<(), slint::PlatformError> {
         };
         // Option chips: defaults first, then the rule's mods.
         ui.set_apply_part("both".into());
-        ui.set_replace_ci(false);
+        // No "ci" mod on the rule means the engine runs it case-sensitively.
+        ui.set_replace_cs(true);
         ui.set_replace_occ("all".into());
-        ui.set_pairs_ci(false);
+        ui.set_pairs_cs(true);
         ui.set_trim_at("both".into());
         ui.set_trim_inv(false);
         for m in spec.mods.split(':').filter(|m| !m.is_empty()) {
             match m {
                 "name" | "stem" => ui.set_apply_part("name".into()),
                 "ext" => ui.set_apply_part("ext".into()),
-                "ci" if spec.kind == "pairs" => ui.set_pairs_ci(true),
-                "ci" => ui.set_replace_ci(true),
+                "ci" if spec.kind == "pairs" => ui.set_pairs_cs(false),
+                "ci" => ui.set_replace_cs(false),
                 "first" | "last" => ui.set_replace_occ(m.into()),
                 "start" | "end" | "all" => ui.set_trim_at(m.into()),
                 "inv" => ui.set_trim_inv(true),
