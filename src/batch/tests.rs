@@ -33,6 +33,51 @@ fn read(p: &Path) -> String {
     fs::read_to_string(p).unwrap()
 }
 
+// Perf guard for execute()'s ready queue and finals()'s lookup map, both
+// O(n²) before 0.3.1. Run: cargo test --release -- --ignored bench --nocapture
+#[test]
+#[ignore]
+fn bench_chain_execute_and_finals() {
+    for n in [5_000usize, 10_000, 20_000] {
+        let d = tmpdir(&format!("bench{n}"));
+        let files: Vec<PathBuf> = (0..=n)
+            .map(|i| d.join(format!("file_{i:06}.txt")))
+            .collect();
+        for f in &files[..n] {
+            fs::write(f, "x").unwrap();
+        }
+        // Shift-by-one chain, given in fully blocked order (worst case).
+        let ops: Vec<Op> = (0..n)
+            .map(|i| Op {
+                from: files[i].clone(),
+                to: files[i + 1].clone(),
+            })
+            .collect();
+        let t = std::time::Instant::now();
+        let res = execute(ops, Mode::Rename);
+        let exec_t = t.elapsed();
+        assert!(res.failed.is_empty());
+        assert_eq!(res.renamed.len(), n);
+
+        let items: Vec<PlanItem> = (0..n)
+            .map(|i| PlanItem {
+                from: files[i].clone(),
+                new_name: String::new(),
+                target: files[i + 1].clone(),
+                changed: true,
+                issue: None,
+            })
+            .collect();
+        let t = std::time::Instant::now();
+        let fin = finals(&items, &res);
+        let finals_t = t.elapsed();
+        assert_eq!(fin[0], files[1]);
+
+        println!("n={n}: execute {exec_t:?}, finals {finals_t:?}");
+        let _ = fs::remove_dir_all(&d);
+    }
+}
+
 #[test]
 fn export_rows_formats_all_outputs() {
     let d = tmpdir("export");

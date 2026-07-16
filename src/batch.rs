@@ -355,14 +355,17 @@ pub struct ExecResult {
 /// Final on-disk path of every planned item: the op's target where it
 /// succeeded, the original path otherwise (unchanged, conflicted, or failed).
 pub fn finals(items: &[PlanItem], res: &ExecResult) -> Vec<PathBuf> {
+    let by_from: HashMap<&Path, &PathBuf> = res
+        .renamed
+        .iter()
+        .map(|op| (op.from.as_path(), &op.to))
+        .collect();
     items
         .iter()
         .map(|it| {
-            res.renamed
-                .iter()
-                .find(|op| op.from == it.from)
-                .map(|op| op.to.clone())
-                .unwrap_or_else(|| it.from.clone())
+            by_from
+                .get(it.from.as_path())
+                .map_or_else(|| it.from.clone(), |to| (*to).clone())
         })
         .collect()
 }
@@ -421,43 +424,68 @@ pub fn execute(ops: Vec<Op>, mode: Mode) -> ExecResult {
         cur_key: String,
         to_key: String,
     }
-    let low = |p: &Path| p.to_string_lossy().to_lowercase();
-    let remove_source = |sources: &mut HashMap<String, usize>, key: &str| {
-        let last = sources.get(key) == Some(&1);
-        if last {
-            sources.remove(key);
-        } else if let Some(n) = sources.get_mut(key) {
-            *n -= 1;
+    // Vacate a source key; ops waiting on it become ready once it hits zero.
+    fn vacate(
+        key: &str,
+        sources: &mut HashMap<String, usize>,
+        waiters: &HashMap<String, Vec<usize>>,
+        pending: &[Option<P>],
+        ready: &mut Vec<usize>,
+    ) {
+        match sources.get_mut(key) {
+            Some(n) if *n > 1 => *n -= 1,
+            Some(_) => {
+                sources.remove(key);
+                for &j in waiters.get(key).into_iter().flatten() {
+                    if pending[j].is_some() {
+                        ready.push(j);
+                    }
+                }
+            }
+            None => {}
         }
-    };
-    let mut pending: Vec<P> = ops
+    }
+    let low = |p: &Path| p.to_string_lossy().to_lowercase();
+    let mut pending: Vec<Option<P>> = ops
         .into_iter()
         .map(|o| {
             let cur_key = low(&o.from);
             let to_key = low(&o.to);
-            P {
+            Some(P {
                 orig: o.from.clone(),
                 cur: o.from,
                 to: o.to,
                 cur_key,
                 to_key,
-            }
+            })
         })
         .collect();
     let mut sources: HashMap<String, usize> = HashMap::new();
-    for p in &pending {
+    let mut waiters: HashMap<String, Vec<usize>> = HashMap::new();
+    for (i, p) in pending.iter().enumerate() {
+        let p = p.as_ref().unwrap();
         *sources.entry(p.cur_key.clone()).or_default() += 1;
+        waiters.entry(p.to_key.clone()).or_default().push(i);
     }
+    let mut ready: Vec<usize> = pending
+        .iter()
+        .enumerate()
+        .filter(|(_, p)| {
+            let p = p.as_ref().unwrap();
+            sources.get(&p.to_key).copied().unwrap_or(0) <= usize::from(p.cur_key == p.to_key)
+        })
+        .map(|(i, _)| i)
+        .collect();
+    // Cycle-break candidates; each index is considered at most once overall.
+    let mut live: Vec<usize> = (0..pending.len()).collect();
+    let mut remaining = pending.len();
     let mut tmp_n = 0u32;
 
-    while !pending.is_empty() {
-        // ponytail: long dependency chains still scan; use a ready queue if that becomes measurable.
-        let unblocked = pending.iter().position(|p| {
-            sources.get(&p.to_key).copied().unwrap_or(0) <= usize::from(p.cur_key == p.to_key)
-        });
-        if let Some(i) = unblocked {
-            let p = pending.swap_remove(i);
-            remove_source(&mut sources, &p.cur_key);
+    while remaining > 0 {
+        if let Some(i) = ready.pop() {
+            let Some(p) = pending[i].take() else { continue };
+            remaining -= 1;
+            vacate(&p.cur_key, &mut sources, &waiters, &pending, &mut ready);
             let case_only = p.cur_key == p.to_key;
             // fs::rename overwrites on Unix; refuse instead of clobbering.
             let res = if !case_only && p.to.exists() {
@@ -489,26 +517,50 @@ pub fn execute(ops: Vec<Op>, mode: Mode) -> ExecResult {
             }
         } else {
             // Pure cycle: move one file aside so the others can proceed.
+            let Some(i) = live.pop() else {
+                // Unreachable with distinct sources/targets (the planner
+                // guarantees both); fail the rest rather than spin.
+                for p in pending.iter_mut().filter_map(Option::take) {
+                    failed.push((
+                        Op {
+                            from: p.orig,
+                            to: p.to,
+                        },
+                        "unresolvable rename order".into(),
+                    ));
+                }
+                break;
+            };
+            if pending[i].is_none() {
+                continue;
+            }
             let mut tmp;
             loop {
                 tmp_n += 1;
-                tmp = pending[0]
+                tmp = pending[i]
+                    .as_ref()
+                    .unwrap()
                     .to
                     .with_file_name(format!(".irtmp_{}_{tmp_n}", std::process::id()));
                 if !tmp.exists() {
                     break;
                 }
             }
-            match fs::rename(&pending[0].cur, &tmp) {
+            match fs::rename(&pending[i].as_ref().unwrap().cur, &tmp) {
                 Ok(_) => {
-                    let old_key = std::mem::replace(&mut pending[0].cur_key, low(&tmp));
-                    remove_source(&mut sources, &old_key);
-                    *sources.entry(pending[0].cur_key.clone()).or_default() += 1;
-                    pending[0].cur = tmp;
+                    let old_key = {
+                        let p = pending[i].as_mut().unwrap();
+                        p.cur = tmp;
+                        std::mem::replace(&mut p.cur_key, low(&p.cur))
+                    };
+                    let new_key = pending[i].as_ref().unwrap().cur_key.clone();
+                    *sources.entry(new_key).or_default() += 1;
+                    vacate(&old_key, &mut sources, &waiters, &pending, &mut ready);
                 }
                 Err(e) => {
-                    let p = pending.swap_remove(0);
-                    remove_source(&mut sources, &p.cur_key);
+                    let p = pending[i].take().unwrap();
+                    remaining -= 1;
+                    vacate(&p.cur_key, &mut sources, &waiters, &pending, &mut ready);
                     failed.push((
                         Op {
                             from: p.orig,
