@@ -1,0 +1,4 @@
+[toolchain]
+# Pinned so CI and local builds use the same compiler; bump deliberately.
+channel = "1.96.0"
+components = ["rustfmt", "clippy"]

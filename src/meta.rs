@@ -110,11 +110,42 @@ fn read_fields(path: &Path) -> Option<Fields> {
             path.as_os_str(),
         ],
     )?;
+    Some(Rc::new(parse_fields(&out)))
+}
+
+/// Parse ExifTool -s2 output ("TagName: value" per line) into a map keyed
+/// by lowercased tag name. Lines without ": " are ignored.
+fn parse_fields(out: &str) -> HashMap<String, String> {
     let mut map = HashMap::new();
     for line in out.lines() {
         if let Some((k, v)) = line.split_once(": ") {
             map.insert(k.trim().to_ascii_lowercase(), v.trim().to_string());
         }
     }
-    Some(Rc::new(map))
+    map
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_exiftool_s2_output() {
+        let out = "FileType: JPEG\r\n\
+                   DateTimeOriginal: 2024:05:01 10:30:00\n\
+                   Title: a: b: c\n\
+                   garbage line without separator\n\
+                   GPSLatitude: +51.501476\n";
+        let m = parse_fields(out);
+        assert_eq!(m.get("filetype").map(String::as_str), Some("JPEG"));
+        // keys are lowercased, values keep their case and inner colons
+        assert_eq!(
+            m.get("datetimeoriginal").map(String::as_str),
+            Some("2024:05:01 10:30:00")
+        );
+        assert_eq!(m.get("title").map(String::as_str), Some("a: b: c"));
+        assert_eq!(m.get("gpslatitude").map(String::as_str), Some("+51.501476"));
+        assert_eq!(m.len(), 4, "separator-less lines are ignored");
+        assert!(parse_fields("").is_empty());
+    }
 }

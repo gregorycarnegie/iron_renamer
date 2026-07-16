@@ -78,6 +78,8 @@ pub struct BatchCfg<'a> {
     /// File-pair mode: items sharing a folder and stem (img1.jpg + img1.xmp)
     /// take the new stem of the first of them and keep their own extension.
     pub pairs: bool,
+    /// Rows for the `<csv:COL>` tag, loaded by the frontend (`--csv FILE`).
+    pub csv: &'a [Vec<String>],
 }
 
 impl<'a> BatchCfg<'a> {
@@ -97,6 +99,7 @@ impl<'a> BatchCfg<'a> {
             dest: "",
             collision: Collision::Fail,
             pairs: false,
+            csv: &[],
         }
     }
 }
@@ -167,7 +170,6 @@ fn lower_abs(p: &Path) -> String {
 /// are valid; collision checks are case-insensitive like NTFS.
 pub fn plan(files: &[PathBuf], cfg: &BatchCfg) -> Vec<PlanItem> {
     crate::engine::reset_js(); // JS rule state never leaks between previews/batches
-    tags::set_total(files.len()); // for the <total> tag
     struct Pre {
         name: String,
         dest_dir: PathBuf,
@@ -194,6 +196,8 @@ pub fn plan(files: &[PathBuf], cfg: &BatchCfg) -> Vec<PlanItem> {
             num: cfg.start + i,
             pad: cfg.pad,
             folder_num,
+            total: files.len(),
+            csv: cfg.csv,
             path: f,
             original: &original,
         };
@@ -261,6 +265,8 @@ pub fn plan(files: &[PathBuf], cfg: &BatchCfg) -> Vec<PlanItem> {
             num: cfg.start + i,
             pad: cfg.pad,
             folder_num: folder_nums[i],
+            total: files.len(),
+            csv: cfg.csv,
             path: f,
             original: &original,
         };

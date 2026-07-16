@@ -433,11 +433,14 @@ pub fn run(args: Vec<String>) {
         pad = (start + files.len() - 1).to_string().len();
     }
 
-    if let Some(path) = &cli.csv {
-        let body = fs::read_to_string(path)
-            .unwrap_or_else(|e| die(&format!("cannot read csv '{}': {e}", path.display())));
-        crate::tags::set_csv(body.lines().map(presets::csv_split).collect());
-    }
+    let csv_rows: Vec<Vec<String>> = match &cli.csv {
+        Some(path) => fs::read_to_string(path)
+            .unwrap_or_else(|e| die(&format!("cannot read csv '{}': {e}", path.display())))
+            .lines()
+            .map(presets::csv_split)
+            .collect(),
+        None => Vec::new(),
+    };
 
     let overrides = std::collections::HashMap::new();
     let cfg = batch::BatchCfg {
@@ -449,6 +452,7 @@ pub fn run(args: Vec<String>) {
         dest: &dest,
         collision,
         pairs: cli.pairs,
+        csv: &csv_rows,
     };
     let items = batch::plan(&files, &cfg);
     // With --apply the export becomes a result log, written after execution.
@@ -803,5 +807,74 @@ mod tests {
         ] {
             assert!(Cli::command().try_get_matches_from(args).is_err());
         }
+    }
+
+    #[test]
+    fn normalize_leaves_non_rule_colons_alone() {
+        // Windows paths and option values contain ':' but are not rule flags.
+        let args = [
+            "-r:ci",
+            "a",
+            "b",
+            r"C:\photos\img.jpg",
+            "--touch",
+            "modified=2024-05-01 10:30",
+        ]
+        .map(str::to_string);
+        let (normalized, mods) = normalize_rule_flags(&args);
+        assert_eq!(
+            normalized[1..],
+            [
+                "-r",
+                "a",
+                "b",
+                r"C:\photos\img.jpg",
+                "--touch",
+                "modified=2024-05-01 10:30"
+            ]
+            .map(str::to_string)
+        );
+        assert_eq!(mods["replace"], vec![vec!["ci".to_string()]]);
+    }
+
+    #[test]
+    fn suffix_mods_track_their_own_occurrence() {
+        // Two -r rules: only the second has mods; each keeps its own set.
+        let args = ["-r", "a", "b", "-e", "x", "y", "-r:ci:last", "c", "d"].map(str::to_string);
+        let (normalized, mods) = normalize_rule_flags(&args);
+        assert_eq!(
+            mods["replace"],
+            vec![Vec::<String>::new(), vec!["ci".into(), "last".into()]]
+        );
+        let matches = Cli::command().try_get_matches_from(normalized).unwrap();
+        let cli = Cli::from_arg_matches(&matches).unwrap();
+        let mut events = rule_events(&cli, &matches, &mods);
+        events.sort_by_key(RuleEvent::pos);
+        assert!(matches!(
+            &events[..],
+            [
+                RuleEvent::Rule { kind: "replace", mods: m1, .. },
+                RuleEvent::Rule { kind: "regex", .. },
+                RuleEvent::Rule { kind: "replace", mods: m2, .. },
+            ] if m1.is_empty() && m2 == &["ci", "last"]
+        ));
+    }
+
+    #[test]
+    fn presets_and_conditions_keep_command_line_position() {
+        let args = ["--preset", "mine", "-c", "upper", "--if", "ext:eq", "jpg"].map(str::to_string);
+        let (normalized, mods) = normalize_rule_flags(&args);
+        let matches = Cli::command().try_get_matches_from(normalized).unwrap();
+        let cli = Cli::from_arg_matches(&matches).unwrap();
+        let mut events = rule_events(&cli, &matches, &mods);
+        events.sort_by_key(RuleEvent::pos);
+        assert!(matches!(
+            &events[..],
+            [
+                RuleEvent::Preset { name, .. },
+                RuleEvent::Rule { kind: "case", .. },
+                RuleEvent::Condition { values, .. },
+            ] if name == "mine" && values == &["ext:eq", "jpg"]
+        ));
     }
 }

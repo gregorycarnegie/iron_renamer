@@ -151,6 +151,8 @@ pub struct Ctx<'a> {
     pub num: usize,   // counter (start + index)
     pub pad: usize,
     pub folder_num: usize, // 1-based position among list items in the same folder
+    pub total: usize,      // batch size for <total>; 0 = no batch context
+    pub csv: &'a [Vec<String>], // rows for <csv:COL>; empty = no CSV loaded
     pub path: &'a Path,
     pub original: &'a str,
 }

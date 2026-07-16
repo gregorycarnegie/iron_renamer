@@ -934,6 +934,7 @@ fn compute(ui: &MainWindow, s: &State) -> Computed {
         dest: &dest,
         collision,
         pairs: ui.get_pairs(),
+        csv: &[], // the GUI's CSV import fills overrides, not <csv:COL> rows
     };
 
     let items = batch::plan(&s.files, &cfg);

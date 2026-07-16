@@ -63,6 +63,7 @@ fn full_flow_preview_chain_collision_undo() {
         dest: "",
         collision: Collision::Fail,
         pairs: false,
+        csv: &[],
     };
 
     // Preview: every target is vacated by the batch itself, so no conflicts.
@@ -190,6 +191,8 @@ fn rules_on_awkward_names() {
             num: 1,
             pad: 1,
             folder_num: 1,
+            total: 1,
+            csv: &[],
             path: &path,
             original: input,
         };
@@ -224,6 +227,7 @@ fn case_insensitive_duplicate_detection() {
         dest: "",
         collision: Collision::Fail,
         pairs: false,
+        csv: &[],
     };
     let items = batch::plan(&files, &cfg);
     assert!(items[0].issue.is_none());

@@ -36,6 +36,8 @@ fn run(e: &RuleEntry, name: &str) -> String {
         num: 7,
         pad: 3,
         folder_num: 1,
+        total: 0,
+        csv: &[],
         path: &path,
         original: name,
     };
@@ -377,4 +379,122 @@ fn js_rule_sandboxed_eval() {
     assert_eq!(run(&e, "a.jpg"), "a2.jpg");
     reset_js();
     assert_eq!(run(&e, "a.jpg"), "a1.jpg");
+}
+
+// ───────────────────────── file discovery (files.rs)
+
+fn tmpdir(name: &str) -> std::path::PathBuf {
+    let d = std::env::temp_dir().join(format!("iron_files_{name}_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(&d).unwrap();
+    d
+}
+
+#[test]
+fn masks_include_exclude_case_insensitive() {
+    let m = Masks::parse("*.jpg; *.PNG ;!*thumb*");
+    assert!(m.pass("photo.jpg"));
+    assert!(m.pass("PHOTO.JPG"));
+    assert!(m.pass("img.png"));
+    assert!(!m.pass("photo.gif"));
+    assert!(!m.pass("photo_THUMB.jpg"), "exclude wins over include");
+    // empty mask passes everything; exclude-only mask includes the rest
+    assert!(Masks::parse("").pass("anything.xyz"));
+    let only_exc = Masks::parse("!*.bak");
+    assert!(only_exc.pass("a.txt"));
+    assert!(!only_exc.pass("a.bak"));
+}
+
+#[test]
+fn natural_key_orders_numbers_and_ignores_case() {
+    let mut v = ["IMG10.jpg", "img2.jpg", "Img3.jpg"];
+    v.sort_by_key(|s| natural_key(s));
+    assert_eq!(v, ["img2.jpg", "Img3.jpg", "IMG10.jpg"]);
+    // digit runs too long for u64 sort after every valid number
+    let mut v = ["a99999999999999999999999", "a1"];
+    v.sort_by_key(|s| natural_key(s));
+    assert_eq!(v[0], "a1");
+}
+
+#[test]
+fn sort_files_by_name_ext_size() {
+    let d = tmpdir("sort");
+    std::fs::write(d.join("b10.txt"), "xxx").unwrap();
+    std::fs::write(d.join("b9.txt"), "x").unwrap();
+    std::fs::write(d.join("a.zip"), "xx").unwrap();
+    let orig = vec![d.join("b10.txt"), d.join("b9.txt"), d.join("a.zip")];
+
+    let mut f = orig.clone();
+    assert!(sort_files(&mut f, "name"));
+    assert_eq!(
+        f,
+        vec![d.join("a.zip"), d.join("b9.txt"), d.join("b10.txt")]
+    );
+
+    let mut f = orig.clone();
+    assert!(sort_files(&mut f, "ext"));
+    assert_eq!(name_of(&f[2]), "a.zip", "txt before zip");
+
+    let mut f = orig.clone();
+    assert!(sort_files(&mut f, "size"));
+    assert_eq!(
+        f,
+        vec![d.join("b9.txt"), d.join("a.zip"), d.join("b10.txt")]
+    );
+
+    let mut f = orig.clone();
+    assert!(!sort_files(&mut f, "none"), "unknown kind leaves order");
+    assert_eq!(f, orig);
+}
+
+#[test]
+fn expand_globs_files_and_dirs() {
+    let d = tmpdir("glob");
+    std::fs::write(d.join("a.jpg"), "").unwrap();
+    std::fs::write(d.join("b.jpg"), "").unwrap();
+    std::fs::write(d.join("c.png"), "").unwrap();
+    std::fs::create_dir(d.join("sub1")).unwrap();
+
+    let pat = d.join("*.jpg");
+    let mut hits = expand(&pat.to_string_lossy(), false);
+    hits.sort();
+    assert_eq!(hits, vec![d.join("a.jpg"), d.join("b.jpg")]);
+
+    // ? matches exactly one char; case-insensitive like Windows
+    assert_eq!(expand(&d.join("?.PNG").to_string_lossy(), false).len(), 1);
+
+    // dirs=true matches folders only
+    let dirs = expand(&d.join("sub?").to_string_lossy(), true);
+    assert_eq!(dirs, vec![d.join("sub1")]);
+    assert!(expand(&d.join("sub?").to_string_lossy(), false).is_empty());
+
+    // no wildcard: passed through untouched, even if it doesn't exist
+    assert_eq!(
+        expand("no_such_file.txt", false),
+        vec![std::path::PathBuf::from("no_such_file.txt")]
+    );
+}
+
+#[test]
+fn collect_dir_recursion_and_masks() {
+    let d = tmpdir("collect");
+    std::fs::write(d.join("a.jpg"), "").unwrap();
+    std::fs::write(d.join("skip.txt"), "").unwrap();
+    std::fs::create_dir(d.join("sub")).unwrap();
+    std::fs::write(d.join("sub").join("b.jpg"), "").unwrap();
+
+    let jpg = Masks::parse("*.jpg");
+    let mut flat = Vec::new();
+    collect_dir(&d, false, &jpg, &mut flat);
+    assert_eq!(flat, vec![d.join("a.jpg")]);
+
+    let mut deep = Vec::new();
+    collect_dir(&d, true, &jpg, &mut deep);
+    deep.sort();
+    assert_eq!(deep, vec![d.join("a.jpg"), d.join("sub").join("b.jpg")]);
+
+    let all = Masks::parse("");
+    let mut everything = Vec::new();
+    collect_dir(&d, true, &all, &mut everything);
+    assert_eq!(everything.len(), 3);
 }

@@ -22,7 +22,14 @@ pub fn natural_key(s: &str) -> Vec<(String, u64)> {
             text.push(c);
         }
     }
-    key.push((text.to_lowercase(), digits.parse().unwrap_or(0)));
+    // No trailing digits = 0 (sorts before any number); overflow = MAX,
+    // matching the mid-string branch above.
+    let last = if digits.is_empty() {
+        0
+    } else {
+        digits.parse().unwrap_or(u64::MAX)
+    };
+    key.push((text.to_lowercase(), last));
     key
 }
 

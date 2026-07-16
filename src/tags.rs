@@ -107,11 +107,10 @@ fn eval(body: &str, full_name: &str, ctx: &Ctx) -> Option<String> {
             )
         }
         "total" => {
-            let n = TOTAL.get();
-            if n == 0 {
+            if ctx.total == 0 {
                 return None; // no batch context (e.g. bare expand)
             }
-            n.to_string()
+            ctx.total.to_string()
         }
         "parent" => abs_parent(ctx)?
             .file_name()
@@ -146,7 +145,7 @@ fn eval(body: &str, full_name: &str, ctx: &Ctx) -> Option<String> {
         "crc32" | "md5" | "sha1" => file_hash(ctx, &tag)?,
         "csv" => {
             let col = args.first().copied().filter(|c| !c.is_empty())?;
-            csv_cell(col, ctx.index)?
+            csv_cell(col, ctx)?
         }
         "now" | "created" | "modified" | "accessed" => {
             let t = match tag.as_str() {
@@ -348,41 +347,24 @@ fn human_size(b: u64) -> String {
     }
 }
 
-thread_local! {
-    static TOTAL: Cell<usize> = const { Cell::new(0) };
-    static CSV: RefCell<Vec<Vec<String>>> = const { RefCell::new(Vec::new()) };
-}
-
-/// Batch size for `<total>`; set by the planner before expanding rules.
-pub fn set_total(n: usize) {
-    TOTAL.set(n);
-}
-
-/// Rows for `<csv:COL>`; set by the frontend (`--csv FILE` / GUI import).
-pub fn set_csv(rows: Vec<Vec<String>>) {
-    CSV.with(|c| *c.borrow_mut() = rows);
-}
-
-// Numeric COL: 1-based column of row `index`. Header COL: the named column
+// Numeric COL: 1-based column of row `ctx.index`. Header COL: the named column
 // (case-insensitive, row 0 is the header) of row `index + 1`. A missing
 // row/cell gives "" so |fallback applies; no CSV loaded leaves the tag literal.
-fn csv_cell(col: &str, index: usize) -> Option<String> {
-    CSV.with(|c| {
-        let rows = c.borrow();
-        if rows.is_empty() {
-            return None;
+fn csv_cell(col: &str, ctx: &Ctx) -> Option<String> {
+    let rows = ctx.csv;
+    if rows.is_empty() {
+        return None;
+    }
+    let (row, ncol) = match col.parse::<usize>() {
+        Ok(n) if n >= 1 => (ctx.index, n - 1),
+        _ => {
+            let n = rows[0].iter().position(|h| h.eq_ignore_ascii_case(col))?;
+            (ctx.index + 1, n)
         }
-        let (row, ncol) = match col.parse::<usize>() {
-            Ok(n) if n >= 1 => (index, n - 1),
-            _ => {
-                let n = rows[0].iter().position(|h| h.eq_ignore_ascii_case(col))?;
-                (index + 1, n)
-            }
-        };
-        Some(sanitize(
-            rows.get(row).and_then(|r| r.get(ncol)).map_or("", |s| s),
-        ))
-    })
+    };
+    Some(sanitize(
+        rows.get(row).and_then(|r| r.get(ncol)).map_or("", |s| s),
+    ))
 }
 
 pub(crate) fn parse_offset(s: &str) -> Option<i64> {
@@ -636,6 +618,8 @@ mod tests {
             num: 7,
             pad: 3,
             folder_num: 2,
+            total: 0,
+            csv: &[],
             path,
             original,
         }
@@ -725,12 +709,10 @@ mod tests {
         assert_eq!(expand("<subfolder:2>", "img.jpg", &c), "2024");
         assert_eq!(expand("<subfolder:3>", "img.jpg", &c), "photos");
         assert_eq!(expand("<subfolder:0>", "img.jpg", &c), "<subfolder:0>");
-        // <total> is literal until the planner sets it
-        set_total(0);
+        // <total> is literal without batch context (ctx.total == 0)
         assert_eq!(expand("<total>", "img.jpg", &c), "<total>");
-        set_total(42);
-        assert_eq!(expand("<total>", "img.jpg", &c), "42");
-        set_total(0);
+        let c42 = Ctx { total: 42, ..c };
+        assert_eq!(expand("<total>", "img.jpg", &c42), "42");
         // unix format token
         let secs: i64 = expand("<now:unix>", "img.jpg", &c).parse().unwrap();
         assert!(secs > 1_700_000_000);
@@ -739,24 +721,27 @@ mod tests {
     #[test]
     fn csv_tag_by_number_and_header() {
         let path = Path::new("a.txt");
-        let c = ctx(path, "a.txt"); // index 4
         // no CSV loaded -> literal
-        set_csv(Vec::new());
-        assert_eq!(expand("<csv:1>", "a.txt", &c), "<csv:1>");
+        assert_eq!(expand("<csv:1>", "a.txt", &ctx(path, "a.txt")), "<csv:1>");
         let rows: Vec<Vec<String>> = (0..7)
             .map(|r| vec![format!("r{r}c1"), format!("r{r}c2")])
             .collect();
-        set_csv(rows);
+        let c = Ctx {
+            csv: &rows,
+            ..ctx(path, "a.txt")
+        }; // index 4
         assert_eq!(expand("<csv:2>", "a.txt", &c), "r4c2");
         // header lookup: row 0 is the header, data rows shift by one
         let mut rows: Vec<Vec<String>> = vec![vec!["Old".into(), "Title".into()]];
         rows.extend((0..7).map(|r| vec![format!("o{r}"), format!("t{r}")]));
-        set_csv(rows);
+        let c = Ctx {
+            csv: &rows,
+            ..ctx(path, "a.txt")
+        };
         assert_eq!(expand("<csv:title>", "a.txt", &c), "t4");
         // missing column/row gives "" so |fallback applies
         assert_eq!(expand("<csv:9|fallback:x>", "a.txt", &c), "x");
         assert_eq!(expand("<csv:nope>", "a.txt", &c), "<csv:nope>");
-        set_csv(Vec::new());
     }
 
     #[test]
