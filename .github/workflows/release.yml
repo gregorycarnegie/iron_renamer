@@ -13,13 +13,25 @@ jobs:
       matrix:
         include:
           - os: windows-latest
-            pack: Compress-Archive target/release/iron_renamer.exe iron_renamer-windows-x86_64.zip
+            pack: |
+              Compress-Archive target/release/iron_renamer.exe iron_renamer-windows-x86_64.zip
+              pwsh -File packaging/windows/package.ps1 -OutputPath iron_renamer-windows-x86_64.msix
+          - os: windows-11-arm
+            pack: |
+              Compress-Archive target/release/iron_renamer.exe iron_renamer-windows-aarch64.zip
+              pwsh -File packaging/windows/package.ps1 -OutputPath iron_renamer-windows-aarch64.msix -Architecture arm64
           - os: ubuntu-latest
             pack: |
               mkdir dist
               cp target/release/iron_renamer packaging/iron_renamer.desktop packaging/install.sh dist/
               cp ui/icon.png dist/icon.png
               tar czf iron_renamer-linux-x86_64.tar.gz -C dist .
+          - os: ubuntu-24.04-arm
+            pack: |
+              mkdir dist
+              cp target/release/iron_renamer packaging/iron_renamer.desktop packaging/install.sh dist/
+              cp ui/icon.png dist/icon.png
+              tar czf iron_renamer-linux-aarch64.tar.gz -C dist .
           - os: macos-latest
             pack: |
               sh packaging/macos_app.sh "$GITHUB_REF_NAME"
