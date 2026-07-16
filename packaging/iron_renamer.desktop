@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Iron Renamer
+Comment=Add files, stack rules, forge names
+Exec=iron_renamer
+Icon=iron_renamer
+Terminal=false
+Categories=Utility;FileTools;

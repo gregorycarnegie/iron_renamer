@@ -15,9 +15,15 @@ jobs:
           - os: windows-latest
             pack: Compress-Archive target/release/iron_renamer.exe iron_renamer-windows-x86_64.zip
           - os: ubuntu-latest
-            pack: tar czf iron_renamer-linux-x86_64.tar.gz -C target/release iron_renamer
+            pack: |
+              mkdir dist
+              cp target/release/iron_renamer packaging/iron_renamer.desktop packaging/install.sh dist/
+              cp ui/icon.png dist/icon.png
+              tar czf iron_renamer-linux-x86_64.tar.gz -C dist .
           - os: macos-latest
-            pack: tar czf iron_renamer-macos-aarch64.tar.gz -C target/release iron_renamer
+            pack: |
+              sh packaging/macos_app.sh "$GITHUB_REF_NAME"
+              tar czf iron_renamer-macos-aarch64.tar.gz -C dist "Iron Renamer.app"
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4

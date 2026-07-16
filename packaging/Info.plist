@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>Iron Renamer</string>
+    <key>CFBundleDisplayName</key>
+    <string>Iron Renamer</string>
+    <key>CFBundleIdentifier</key>
+    <string>io.github.gregorycarnegie.iron-renamer</string>
+    <key>CFBundleExecutable</key>
+    <string>iron_renamer</string>
+    <key>CFBundleIconFile</key>
+    <string>icon</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>__VERSION__</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+</dict>
+</plist>
