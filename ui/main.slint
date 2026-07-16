@@ -75,15 +75,17 @@ component Chip inherits Rectangle {
     border-width: 1px;
     border-color: active ? Palette.amber : Palette.line;
     animate background, border-color { duration: 120ms; }
-    Text {
-        text: root.label;
-        color: root.active ? Palette.amber : Palette.dim;
-        font-size: 11px;
-        font-weight: root.active ? 700 : 400;
-        horizontal-alignment: center;
-        vertical-alignment: center;
-        width: 100%;
-        height: 100%;
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        Text {
+            text: root.label;
+            color: root.active ? Palette.amber : Palette.dim;
+            font-size: 11px;
+            font-weight: root.active ? 700 : 400;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
     }
     ta := TouchArea { clicked => { root.clicked(); } }
 }
@@ -98,14 +100,16 @@ component ToolButton inherits Rectangle {
     border-width: 1px;
     border-color: ta.has-hover ? (danger ? #ff625966 : Palette.line) : Palette.line-soft;
     animate background, border-color { duration: 120ms; }
-    Text {
-        text: root.label;
-        color: root.danger ? Palette.error : Palette.text;
-        font-size: 11px;
-        horizontal-alignment: center;
-        vertical-alignment: center;
-        width: 100%;
-        height: 100%;
+    HorizontalLayout {
+        padding-left: 11px;
+        padding-right: 11px;
+        Text {
+            text: root.label;
+            color: root.danger ? Palette.error : Palette.text;
+            font-size: 11px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
     }
     ta := TouchArea { clicked => { root.clicked(); } }
 }
@@ -130,6 +134,40 @@ component MiniButton inherits Rectangle {
     ta := TouchArea { clicked => { root.clicked(); } }
 }
 
+// Native-style caption button (minimize/maximize/close) for the frameless
+// window. Icons are stroked paths — glyph fonts aren't reliable cross-platform.
+component WinButton inherits Rectangle {
+    in property <string> icon; // SVG path commands in a 10×10 viewbox
+    in property <bool> danger: false;
+    callback clicked();
+    width: 44px;
+    background: ta.has-hover ? (danger ? #e81123 : Palette.line) : transparent;
+    animate background { duration: 100ms; }
+    Path {
+        width: 10px;
+        height: 10px;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        viewbox-width: 10;
+        viewbox-height: 10;
+        commands: root.icon;
+        stroke: ta.has-hover ? (root.danger ? white : Palette.text) : Palette.dim;
+        stroke-width: 1px;
+    }
+    ta := TouchArea { clicked => { root.clicked(); } }
+}
+
+// Invisible strip along a window edge that starts a native resize drag.
+component EdgeGrip inherits TouchArea {
+    in property <string> dir;
+    callback resize(string);
+    pointer-event(ev) => {
+        if (ev.kind == PointerEventKind.down && ev.button == PointerEventButton.left) {
+            root.resize(root.dir);
+        }
+    }
+}
+
 component SectionTitle inherits Text {
     color: Palette.faint;
     font-size: 10px;
@@ -139,10 +177,11 @@ component SectionTitle inherits Text {
 
 export component MainWindow inherits Window {
     title: "Iron Renamer";
+    no-frame: root.frameless;
     background: Palette.bg;
     preferred-width: 1180px;
     preferred-height: 740px;
-    min-width: 900px;
+    min-width: 1010px;
     min-height: 560px;
     default-font-family: "Segoe UI";
 
@@ -153,6 +192,14 @@ export component MainWindow inherits Window {
     in property <int> errors: 0;
     in property <string> status_text: "add files, stack rules, forge names.";
     in property <bool> can_undo: false;
+
+    // Custom title bar: frameless on Windows/Linux, native frame on macOS.
+    // Min/max use the builtin Window.minimized/maximized properties (winit
+    // backend keeps them in sync); close/drag/resize need native calls in Rust.
+    in property <bool> frameless: false;
+    callback win_close();
+    callback win_drag();
+    callback win_resize(string);
 
     in-out property <string> new_kind: "replace";
     in-out property <string> field_a: "";
@@ -173,6 +220,7 @@ export component MainWindow inherits Window {
     callback clear_files();
     callback add_rule();
     callback remove_rule(int);
+    callback clear_rules();
     callback move_rule(int, int);
     callback edit_rule(int);   // click a stack row: load it into the form
     callback cancel_edit();
@@ -246,9 +294,17 @@ export component MainWindow inherits Window {
             height: 62px;
             background: Palette.panel;
             Rectangle { y: parent.height - 1px; height: 1px; background: Palette.line-soft; }
+            // The whole header is the title bar; buttons declared later sit on top.
+            if root.frameless : TouchArea {
+                pointer-event(ev) => {
+                    if (ev.kind == PointerEventKind.down && ev.button == PointerEventButton.left) {
+                        root.win_drag();
+                    }
+                }
+            }
             HorizontalLayout {
                 padding-left: 18px;
-                padding-right: 18px;
+                padding-right: root.frameless ? 150px : 18px;
                 spacing: 14px;
                 Rectangle {
                     width: 34px;
@@ -300,6 +356,20 @@ export component MainWindow inherits Window {
                     }
                 }
             }
+            if root.frameless : HorizontalLayout {
+                width: 132px; // 3 × 44px — explicit, or the layout fills the header
+                x: parent.width - self.width;
+                y: 0;
+                height: 30px;
+                WinButton { icon: "M 0 5 L 10 5"; clicked => { root.minimized = true; } }
+                WinButton {
+                    icon: root.maximized
+                        ? "M 0.5 2.5 L 7.5 2.5 L 7.5 9.5 L 0.5 9.5 Z M 2.5 2.5 L 2.5 0.5 L 9.5 0.5 L 9.5 7.5 L 7.5 7.5"
+                        : "M 0.5 0.5 L 9.5 0.5 L 9.5 9.5 L 0.5 9.5 Z";
+                    clicked => { root.maximized = !root.maximized; }
+                }
+                WinButton { icon: "M 0 0 L 10 10 M 10 0 L 0 10"; danger: true; clicked => { root.win_close(); } }
+            }
         }
 
         HorizontalLayout {
@@ -308,7 +378,7 @@ export component MainWindow inherits Window {
 
             // ───────────────────────── left rail: rules
             Rectangle {
-                width: 296px;
+                width: 312px;
                 background: Palette.panel;
 
                 // Whole rail scrolls so nothing clips at small window sizes;
@@ -645,14 +715,15 @@ export component MainWindow inherits Window {
                     Rectangle { height: 6px; }
                     HorizontalLayout {
                         spacing: 6px;
-                        SectionTitle { text: "RULE STACK — TOP TO BOTTOM"; vertical-alignment: center; }
+                        SectionTitle { text: "RULE STACK"; vertical-alignment: center; }
                         Rectangle { horizontal-stretch: 1; }
                         Chip { label: "save"; clicked => { root.save_preset(); } }
                         Chip { label: "load"; clicked => { root.load_preset(); } }
+                        Chip { label: "clear"; clicked => { root.clear_rules(); } }
                     }
 
                     if root.rules.length == 0 : Text {
-                        text: "no rules yet";
+                        text: "no rules yet — applied top to bottom";
                         color: Palette.faint;
                         font-size: 12px;
                     }
@@ -787,27 +858,32 @@ export component MainWindow inherits Window {
                         HorizontalLayout {
                             spacing: 6px;
                             height: 26px;
-                            ToolButton { label: "＋ Files";  width: 72px;  clicked => { root.pick_files(); } }
-                            ToolButton { label: "＋ From folder"; width: 102px; clicked => { root.pick_folder(); } }
-                            ToolButton { label: "＋ Folders"; width: 84px; clicked => { root.pick_dirs(); } }
-                            ToolButton { label: "Clear"; danger: true; width: 54px; clicked => { root.clear_files(); } }
+                            ToolButton { label: "＋ Files";  clicked => { root.pick_files(); } }
+                            ToolButton { label: "＋ From folder"; clicked => { root.pick_folder(); } }
+                            ToolButton { label: "＋ Folders"; clicked => { root.pick_dirs(); } }
+                            ToolButton { label: "Clear"; danger: true; clicked => { root.clear_files(); } }
                             Rectangle { horizontal-stretch: 1; }
-                            ToolButton { label: "Import CSV"; width: 84px; clicked => { root.import_csv(); } }
-                            ToolButton { label: "Export"; width: 60px; clicked => { root.export_preview(); } }
-                            ToolButton { label: "Save list"; width: 72px; clicked => { root.save_list(); } }
-                            ToolButton { label: "Load list"; width: 72px; clicked => { root.load_list(); } }
+                            ToolButton { label: "Import CSV"; clicked => { root.import_csv(); } }
+                            ToolButton { label: "Export"; clicked => { root.export_preview(); } }
+                            ToolButton { label: "Save list"; clicked => { root.save_list(); } }
+                            ToolButton { label: "Load list"; clicked => { root.load_list(); } }
                         }
                         HorizontalLayout {
                             spacing: 8px;
                             height: 30px;
+                            // Shrink before anything clips; the spacer eats surplus.
                             search-field := Field {
-                                width: 170px;
+                                min-width: 120px;
+                                max-width: 170px;
+                                horizontal-stretch: 1;
                                 placeholder: "search list  (Ctrl+F)";
                                 text <=> root.search_text;
                                 edited => { root.settings_changed(); }
                             }
                             Field {
-                                width: 190px;
+                                min-width: 130px;
+                                max-width: 190px;
+                                horizontal-stretch: 1;
                                 mono: true;
                                 placeholder: "masks: *.jpg;!*thumb*";
                                 text <=> root.mask_text;
@@ -853,7 +929,7 @@ export component MainWindow inherits Window {
                             }
                             ToolButton { label: "▲"; width: 34px; height: 30px; clicked => { root.move_selected(-1); } }
                             ToolButton { label: "▼"; width: 34px; height: 30px; clicked => { root.move_selected(1); } }
-                            ToolButton { label: "Remove"; danger: true; width: 70px; height: 30px; clicked => { root.remove_selected(); } }
+                            ToolButton { label: "Remove"; danger: true; height: 30px; clicked => { root.remove_selected(); } }
                         }
                     }
                     Rectangle { y: parent.height - 1px; height: 1px; background: Palette.line-soft; }
@@ -1020,5 +1096,18 @@ export component MainWindow inherits Window {
             }
         }
     }
+    }
+
+    // Frameless windows have no native resize borders; these strips start a
+    // native resize drag. Maximized windows don't resize from the edges.
+    if root.frameless && !root.maximized : Rectangle {
+        EdgeGrip { dir: "n";  x: 12px; y: 0; width: parent.width - 24px; height: 4px; mouse-cursor: ns-resize; resize(d) => { root.win_resize(d); } }
+        EdgeGrip { dir: "s";  x: 12px; y: parent.height - 4px; width: parent.width - 24px; height: 4px; mouse-cursor: ns-resize; resize(d) => { root.win_resize(d); } }
+        EdgeGrip { dir: "w";  x: 0; y: 12px; width: 4px; height: parent.height - 24px; mouse-cursor: ew-resize; resize(d) => { root.win_resize(d); } }
+        EdgeGrip { dir: "e";  x: parent.width - 4px; y: 12px; width: 4px; height: parent.height - 24px; mouse-cursor: ew-resize; resize(d) => { root.win_resize(d); } }
+        EdgeGrip { dir: "nw"; x: 0; y: 0; width: 12px; height: 12px; mouse-cursor: nwse-resize; resize(d) => { root.win_resize(d); } }
+        EdgeGrip { dir: "ne"; x: parent.width - 12px; y: 0; width: 12px; height: 12px; mouse-cursor: nesw-resize; resize(d) => { root.win_resize(d); } }
+        EdgeGrip { dir: "sw"; x: 0; y: parent.height - 12px; width: 12px; height: 12px; mouse-cursor: nesw-resize; resize(d) => { root.win_resize(d); } }
+        EdgeGrip { dir: "se"; x: parent.width - 12px; y: parent.height - 12px; width: 12px; height: 12px; mouse-cursor: nwse-resize; resize(d) => { root.win_resize(d); } }
     }
 }

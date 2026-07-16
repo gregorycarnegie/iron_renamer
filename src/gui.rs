@@ -257,13 +257,23 @@ fn apply_preset(ui: &MainWindow, st: &Rc<RefCell<State>>, p: &Path) {
 /// `initial` paths (from the Explorer context menu or `iron_renamer gui`)
 /// load as if dropped on the window; a .preset file loads as a preset.
 pub fn run(initial: Vec<PathBuf>) -> Result<(), slint::PlatformError> {
-    // Dark native title bar to match the app (must be hooked before window creation).
+    // Frameless window with a custom in-app title bar, VS Code style; the
+    // decorations themselves come off via the Window's `no-frame` property.
+    // macOS keeps the native frame: winit can't drag-resize there and the
+    // traffic lights belong on the left. Hooked before window creation.
     slint::BackendSelector::new()
         .with_winit_window_attributes_hook(|attrs| {
-            attrs.with_theme(Some(slint::winit_030::winit::window::Theme::Dark))
+            let attrs = attrs.with_theme(Some(slint::winit_030::winit::window::Theme::Dark));
+            #[cfg(target_os = "windows")]
+            let attrs = {
+                use slint::winit_030::winit::platform::windows::WindowAttributesExtWindows;
+                attrs.with_undecorated_shadow(true)
+            };
+            attrs
         })
         .select()?;
     let ui = MainWindow::new()?;
+    ui.set_frameless(!cfg!(target_os = "macos"));
     let state = Rc::new(RefCell::new(State::default()));
     state.borrow_mut().can_undo = !batch::history().is_empty();
 
@@ -291,6 +301,52 @@ pub fn run(initial: Vec<PathBuf>) -> Result<(), slint::PlatformError> {
                 handle_drop(&ui, &st, path.clone());
             }
             EventResult::Propagate
+        });
+    }
+
+    // Custom title bar: close, and the native move/resize drag loops.
+    {
+        use slint::winit_030::{WinitWindowAccessor, winit::window::ResizeDirection};
+
+        let weak = ui.as_weak();
+        ui.on_win_close(move || weak.unwrap().window().hide().unwrap());
+
+        // A drag starts on press so the native move loop takes over, which
+        // swallows TouchArea's double-clicked — so detect the double click
+        // ourselves: two presses within 400ms toggle maximize instead.
+        let weak = ui.as_weak();
+        let last_press = std::cell::Cell::new(None::<std::time::Instant>);
+        ui.on_win_drag(move || {
+            let ui = weak.unwrap();
+            let w = ui.window();
+            if last_press.get().is_some_and(|t| t.elapsed().as_millis() < 400) {
+                last_press.set(None);
+                w.set_maximized(!w.is_maximized());
+            } else if !w.is_maximized() {
+                // ponytail: dragging a maximized window doesn't restore-then-drag like
+                // native title bars; add restore-on-drag if anyone misses it
+                last_press.set(Some(std::time::Instant::now()));
+                w.with_winit_window(|w| {
+                    let _ = w.drag_window();
+                });
+            }
+        });
+
+        let weak = ui.as_weak();
+        ui.on_win_resize(move |dir| {
+            let dir = match dir.as_str() {
+                "n" => ResizeDirection::North,
+                "s" => ResizeDirection::South,
+                "e" => ResizeDirection::East,
+                "w" => ResizeDirection::West,
+                "ne" => ResizeDirection::NorthEast,
+                "nw" => ResizeDirection::NorthWest,
+                "sw" => ResizeDirection::SouthWest,
+                _ => ResizeDirection::SouthEast,
+            };
+            weak.unwrap().window().with_winit_window(|w| {
+                let _ = w.drag_resize_window(dir);
+            });
         });
     }
 
@@ -692,6 +748,15 @@ pub fn run(initial: Vec<PathBuf>) -> Result<(), slint::PlatformError> {
         remove_rule(&mut s, i as usize);
         ui.set_editing_rule(s.editing.map_or(-1, |e| e as i32));
         drop(s);
+        refresh(&ui, &st.borrow());
+    });
+
+    on!(on_clear_rules, |ui, st| {
+        let mut s = st.borrow_mut();
+        s.rules.clear();
+        s.editing = None;
+        drop(s);
+        ui.set_editing_rule(-1);
         refresh(&ui, &st.borrow());
     });
 
