@@ -193,6 +193,8 @@ export component MainWindow inherits Window {
     in property <int> errors: 0;
     in property <string> status_text: "add files, stack rules, forge names.";
     in property <bool> can_undo: false;
+    in property <string> app_version: "";
+    in-out property <bool> show_about: false;
 
     // Custom title bar: frameless on Windows/Linux, native frame on macOS.
     // Min/max use the builtin Window.minimized/maximized properties (winit
@@ -201,6 +203,7 @@ export component MainWindow inherits Window {
     callback win_close();
     callback win_drag();
     callback win_resize(string);
+    callback open_url(string);
 
     in-out property <string> new_kind: "replace";
     in-out property <string> field_a: "";
@@ -266,7 +269,12 @@ export component MainWindow inherits Window {
             if (e.modifiers.control && e.text == Key.Return) { if (root.changed > 0) { root.apply_batch(); } return accept; }
             if (e.text == Key.F2) { if (root.selected_row >= 0) { override-field.grab(); } return accept; }
             if (e.text == Key.Delete) { if (root.selected_row >= 0) { root.remove_selected(); } return accept; }
-            if (e.text == Key.Escape) { root.selected_row = -1; root.row_clicked(-1); return accept; }
+            if (e.text == Key.Escape) {
+                if (root.show_about) { root.show_about = false; return accept; }
+                root.selected_row = -1;
+                root.row_clicked(-1);
+                return accept;
+            }
             if (e.text == Key.UpArrow) {
                 if (e.modifiers.control) { root.move_selected(-1); }
                 else if (root.files.length > 0) {
@@ -355,6 +363,10 @@ export component MainWindow inherits Window {
                         font-size: 12px;
                         font-family: "Cascadia Mono";
                     }
+                }
+                VerticalLayout {
+                    alignment: center;
+                    MiniButton { glyph: "?"; clicked => { root.show_about = true; } }
                 }
             }
             if root.frameless : HorizontalLayout {
@@ -1097,6 +1109,63 @@ export component MainWindow inherits Window {
             }
         }
     }
+    }
+
+    // ───────────────────────── about dialog
+    if root.show_about : Rectangle {
+        background: #000000aa;
+        TouchArea { clicked => { root.show_about = false; } }
+        Rectangle {
+            width: 340px;
+            height: about-content.min-height;
+            border-radius: 8px;
+            background: Palette.panel;
+            border-width: 1px;
+            border-color: Palette.line;
+            drop-shadow-blur: 30px;
+            drop-shadow-color: #00000088;
+            TouchArea { } // swallow clicks so the scrim doesn't close
+            about-content := VerticalLayout {
+                padding: 24px;
+                spacing: 6px;
+                Text {
+                    text: "IRON RENAMER";
+                    color: Palette.text;
+                    font-size: 15px;
+                    font-weight: 800;
+                    letter-spacing: 3px;
+                }
+                Text {
+                    text: "version " + root.app_version;
+                    color: Palette.amber;
+                    font-size: 12px;
+                    font-family: "Cascadia Mono";
+                }
+                Text {
+                    text: "batch rename · live preview";
+                    color: Palette.dim;
+                    font-size: 11px;
+                }
+                Rectangle { height: 10px; }
+                slint-link := TouchArea {
+                    height: 16px;
+                    mouse-cursor: pointer;
+                    clicked => { root.open_url("https://slint.dev"); }
+                    Text {
+                        text: "Made with Slint — slint.dev";
+                        color: slint-link.has-hover ? Palette.amber : Palette.dim;
+                        font-size: 11px;
+                        horizontal-alignment: left;
+                        vertical-alignment: center;
+                        width: 100%;
+                        height: 100%;
+                        animate color { duration: 120ms; }
+                    }
+                }
+                Rectangle { height: 14px; }
+                Chip { label: "close"; clicked => { root.show_about = false; } }
+            }
+        }
     }
 
     // Frameless windows have no native resize borders; these strips start a

@@ -274,6 +274,22 @@ pub fn run(initial: Vec<PathBuf>) -> Result<(), slint::PlatformError> {
         .select()?;
     let ui = MainWindow::new()?;
     ui.set_frameless(!cfg!(target_os = "macos"));
+    ui.set_app_version(env!("CARGO_PKG_VERSION").into());
+    ui.on_open_url(|url| {
+        let url = url.to_string();
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::process::CommandExt;
+            let _ = std::process::Command::new("cmd")
+                .args(["/C", "start", "", &url])
+                .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
+                .spawn();
+        }
+        #[cfg(target_os = "macos")]
+        let _ = std::process::Command::new("open").arg(&url).spawn();
+        #[cfg(all(unix, not(target_os = "macos")))]
+        let _ = std::process::Command::new("xdg-open").arg(&url).spawn();
+    });
     let state = Rc::new(RefCell::new(State::default()));
     state.borrow_mut().can_undo = !batch::history().is_empty();
 
