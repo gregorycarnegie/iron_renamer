@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.3.1 - 2026-07-16
+
+- Made large rename chains scale linearly instead of quadratically.
+
 ## 0.3.0 - 2026-07-16
 
 - Frameless window with a custom in-app title bar on Windows and Linux (VS Code style): the header hosts the caption buttons, drags the window, and double-click maximizes; edge grips resize. macOS keeps the native frame.
