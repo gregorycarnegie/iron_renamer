@@ -19,7 +19,7 @@ New-Item (Split-Path $output) -ItemType Directory -Force | Out-Null
 Copy-Item $exe (Join-Path $stage "iron_renamer.exe")
 
 $cargo = Get-Content (Join-Path $root "Cargo.toml") -Raw
-$version = [regex]::Match($cargo, '(?m)^version = "(\d+\.\d+\.\d+)"$').Groups[1].Value
+$version = [regex]::Match($cargo, '(?m)^version = "(\d+\.\d+\.\d+)"\r?$').Groups[1].Value
 if (!$version) { throw "Could not read the package version from Cargo.toml" }
 $manifest = Get-Content (Join-Path $PSScriptRoot "AppxManifest.xml") -Raw
 $manifest = $manifest -replace 'Version="0\.0\.0\.0"', "Version=`"$version.0`""
