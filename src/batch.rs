@@ -256,6 +256,46 @@ pub fn plan(files: &[PathBuf], cfg: &BatchCfg) -> Vec<PlanItem> {
     };
 
     // Pass 2: sequential collision resolution.
+    // A stat per candidate target crawls on some storage/AV setups (~25ms
+    // each); one read_dir per destination folder answers all of them, and the
+    // folders are enumerated in parallel — on a network share each one is a
+    // round trip. Names are lowercased to match the case-insensitive
+    // collision keys below.
+    let dest_dirs: Vec<PathBuf> = pre
+        .iter()
+        .filter(|p| p.changed)
+        .map(|p| p.dest_dir.clone())
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+    let mut listing: HashMap<PathBuf, HashSet<String>> = crate::engine::list_dirs(dest_dirs)
+        .into_iter()
+        .map(|(d, entries)| {
+            (
+                d,
+                entries
+                    .into_iter()
+                    .map(|(n, _)| n.to_string_lossy().to_lowercase())
+                    .collect(),
+            )
+        })
+        .collect();
+    let mut on_disk = move |t: &Path| -> bool {
+        match (t.parent(), t.file_name()) {
+            (Some(d), Some(n)) if !d.as_os_str().is_empty() => listing
+                .entry(d.to_path_buf())
+                .or_insert_with(|| {
+                    std::fs::read_dir(d)
+                        .into_iter()
+                        .flatten()
+                        .flatten()
+                        .map(|e| e.file_name().to_string_lossy().to_lowercase())
+                        .collect()
+                })
+                .contains(&n.to_string_lossy().to_lowercase()),
+            _ => t.exists(),
+        }
+    };
     let mut taken: HashSet<String> = HashSet::new();
     let mut items: Vec<PlanItem> = Vec::with_capacity(files.len());
     for (i, (f, p)) in files.iter().zip(&pre).enumerate() {
@@ -282,7 +322,7 @@ pub fn plan(files: &[PathBuf], cfg: &BatchCfg) -> Vec<PlanItem> {
                 let is_self = key == self_lower;
                 // In copy mode "the same file, different case" is still a
                 // collision; for rename it is a valid case-only rename.
-                let disk = target.exists()
+                let disk = on_disk(&target)
                     && !vacated.contains(&key)
                     && (!is_self || cfg.mode == Mode::Copy);
                 let dup = taken.contains(&key);

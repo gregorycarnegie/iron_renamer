@@ -11,6 +11,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
     rc::Rc,
+    sync::{Arc, Mutex},
 };
 
 slint::include_modules!();
@@ -146,10 +147,13 @@ fn parse_list(body: &str) -> (Vec<PathBuf>, bool, usize) {
         .map(PathBuf::from)
         .collect();
     let total = paths.len();
-    let dirs_mode = !paths.is_empty() && paths.iter().all(|p| p.is_dir());
+    let mut kinds = FsKinds::new();
+    kinds.warm(&paths);
+    let dirs_mode = !paths.is_empty() && paths.iter().all(|p| kinds.kind(p) == Some(true));
+    let want = Some(dirs_mode);
     let keep: Vec<PathBuf> = paths
         .into_iter()
-        .filter(|p| if dirs_mode { p.is_dir() } else { p.is_file() })
+        .filter(|p| kinds.kind(p) == want)
         .collect();
     let skipped = total - keep.len();
     (keep, dirs_mode, skipped)
@@ -191,33 +195,136 @@ fn specs_from_preset(rules: Vec<(String, String, String, String)>) -> (Vec<RuleS
     (specs, bad)
 }
 
-// OS drag-and-drop: files add as files; a folder adds its contents with the
-// current mask/recurse settings, unless the list is already in folder mode.
-fn handle_drop(ui: &MainWindow, st: &Rc<RefCell<State>>, path: PathBuf) {
-    if path.is_dir() {
-        let folder_mode = { st.borrow().dirs && !st.borrow().files.is_empty() };
-        if folder_mode {
-            add_files(&mut st.borrow_mut(), vec![path]);
-        } else {
-            if mode_blocked(ui, &st.borrow(), false) {
-                return;
-            }
-            let masks = Masks::parse(&ui.get_mask_text());
-            let mut found = Vec::new();
-            collect_dir(&path, ui.get_recurse(), &masks, &mut found);
-            let mut s = st.borrow_mut();
-            s.dirs = false;
-            add_files(&mut s, found);
+// Path::is_dir()/is_file() open a handle per file, which crawls on some
+// storage/AV setups (~25ms each); one read_dir per parent classifies every
+// sibling in a single pass. Some(true)=dir, Some(false)=file, None=missing.
+struct FsKinds {
+    map: HashMap<PathBuf, HashMap<std::ffi::OsString, bool>>,
+}
+
+impl FsKinds {
+    fn new() -> Self {
+        Self {
+            map: HashMap::new(),
         }
-    } else {
-        if mode_blocked(ui, &st.borrow(), false) {
-            return;
-        }
-        let mut s = st.borrow_mut();
-        s.dirs = false;
-        add_files(&mut s, vec![path]);
     }
-    refresh(ui, &st.borrow());
+
+    // Enumerate all not-yet-cached parent folders in parallel up front —
+    // serial round trips to a network share add whole seconds.
+    fn warm(&mut self, paths: &[PathBuf]) {
+        let dirs: Vec<PathBuf> = paths
+            .iter()
+            .filter_map(|p| p.parent())
+            .filter(|d| !d.as_os_str().is_empty() && !self.map.contains_key(*d))
+            .map(Path::to_path_buf)
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect();
+        for (d, entries) in crate::engine::list_dirs(dirs) {
+            self.map.insert(d, entries.into_iter().collect());
+        }
+    }
+
+    fn kind(&mut self, p: &Path) -> Option<bool> {
+        let (Some(parent), Some(name)) = (p.parent(), p.file_name()) else {
+            return p.is_dir().then_some(true); // drive roots etc.
+        };
+        if parent.as_os_str().is_empty() {
+            return std::fs::metadata(p).ok().map(|m| m.is_dir());
+        }
+        let map = self.map.entry(parent.to_path_buf()).or_insert_with(|| {
+            std::fs::read_dir(parent)
+                .into_iter()
+                .flatten()
+                .flatten()
+                .map(|e| {
+                    // ponytail: only symlink/junction entries pay a real stat
+                    let is_dir = e
+                        .file_type()
+                        .is_ok_and(|t| t.is_dir() || (t.is_symlink() && e.path().is_dir()));
+                    (e.file_name(), is_dir)
+                })
+                .collect()
+        });
+        // Case mismatches and unreadable parents fall back to a single stat.
+        map.get(name)
+            .copied()
+            .or_else(|| std::fs::metadata(p).ok().map(|m| m.is_dir()))
+    }
+}
+
+// What a background drop scan found, ready to apply on the UI thread.
+struct DropScan {
+    add: Vec<PathBuf>,
+    folder_mode: bool, // list was in folder mode: folders added, files blocked
+    blocked: usize,    // paths skipped by the file/folder mode wall
+}
+
+// OS drag-and-drop: files add as files; a folder adds its contents with the
+// mask/recurse settings as of drop time, unless the list is already in folder
+// mode. All path I/O runs on a worker thread — on a network share, classifying
+// hundreds of paths is seconds of round trips and would freeze the UI — and
+// the result lands back on the UI thread via a short poll timer.
+fn handle_drop(ui: &MainWindow, st: &Rc<RefCell<State>>, paths: Vec<PathBuf>) {
+    let folder_mode = {
+        let s = st.borrow();
+        s.dirs && !s.files.is_empty()
+    };
+    let masks = Masks::parse(&ui.get_mask_text());
+    let recurse = ui.get_recurse();
+    ui.set_status_text(format!("scanning {} dropped item(s)…", paths.len()).into());
+
+    let slot: Arc<Mutex<Option<DropScan>>> = Arc::new(Mutex::new(None));
+    {
+        let slot = slot.clone();
+        std::thread::spawn(move || {
+            let mut kinds = FsKinds::new();
+            kinds.warm(&paths);
+            let mut scan = DropScan {
+                add: Vec::new(),
+                folder_mode,
+                blocked: 0,
+            };
+            for path in paths {
+                match (kinds.kind(&path) == Some(true), folder_mode) {
+                    (true, true) => scan.add.push(path),
+                    (true, false) => collect_dir(&path, recurse, &masks, &mut scan.add),
+                    (false, true) => scan.blocked += 1,
+                    (false, false) => scan.add.push(path),
+                }
+            }
+            *slot.lock().unwrap() = Some(scan);
+        });
+    }
+
+    // ponytail: the timer keeps itself alive through its own Rc and goes inert
+    // after one apply; the dead allocation per drop is negligible.
+    let weak = ui.as_weak();
+    let st = st.clone();
+    let timer = Rc::new(slint::Timer::default());
+    let alive = timer.clone();
+    timer.start(
+        slint::TimerMode::Repeated,
+        std::time::Duration::from_millis(50),
+        move || {
+            let Some(scan) = slot.lock().unwrap().take() else {
+                return;
+            };
+            alive.stop();
+            let Some(ui) = weak.upgrade() else { return };
+            {
+                let mut s = st.borrow_mut();
+                if !scan.folder_mode {
+                    s.dirs = false;
+                }
+                add_files(&mut s, scan.add);
+            }
+            refresh(&ui, &st.borrow());
+            if scan.blocked > 0 {
+                ui.set_status_text("list holds folders — Clear it before adding files".into());
+            }
+        },
+    );
 }
 
 // Load a preset file into the rule list and settings (Load-preset button,
@@ -310,10 +417,32 @@ pub fn run(initial: Vec<PathBuf>) -> Result<(), slint::PlatformError> {
         use slint::winit_030::{EventResult, WinitWindowAccessor, winit::event::WindowEvent};
         let weak = ui.as_weak();
         let st = state.clone();
+        // One DroppedFile event arrives per file; refreshing on each makes a big
+        // drop O(N²). Buffer the burst and debounce: each file restarts the
+        // timer, so one refresh runs shortly after the last file lands. (A
+        // zero-delay single-shot is not enough — winit can run timers between
+        // individual drop events.)
+        let pending: Rc<RefCell<Vec<PathBuf>>> = Rc::new(RefCell::new(Vec::new()));
+        let debounce = Rc::new(slint::Timer::default());
         ui.window().on_winit_window_event(move |_, ev| {
             if let Some(ui) = weak.upgrade() {
                 match ev {
-                    WindowEvent::DroppedFile(path) => handle_drop(&ui, &st, path.clone()),
+                    WindowEvent::DroppedFile(path) => {
+                        pending.borrow_mut().push(path.clone());
+                        let weak = weak.clone();
+                        let st = st.clone();
+                        let pending = pending.clone();
+                        debounce.start(
+                            slint::TimerMode::SingleShot,
+                            std::time::Duration::from_millis(100),
+                            move || {
+                                if let Some(ui) = weak.upgrade() {
+                                    let paths = std::mem::take(&mut *pending.borrow_mut());
+                                    handle_drop(&ui, &st, paths);
+                                }
+                            },
+                        );
+                    }
                     // The custom title bar's move/resize (`drag_window` /
                     // `drag_resize_window` above) and focus changes hand the pointer
                     // to the window manager for a while; on Linux winit doesn't
@@ -913,14 +1042,15 @@ pub fn run(initial: Vec<PathBuf>) -> Result<(), slint::PlatformError> {
         ui.set_status_text(msg.into());
     });
 
-    for p in initial {
-        if p.extension()
+    let (presets, files): (Vec<_>, Vec<_>) = initial.into_iter().partition(|p| {
+        p.extension()
             .is_some_and(|e| e.eq_ignore_ascii_case("preset"))
-        {
-            apply_preset(&ui, &state, &p);
-        } else {
-            handle_drop(&ui, &state, p);
-        }
+    });
+    for p in presets {
+        apply_preset(&ui, &state, &p);
+    }
+    if !files.is_empty() {
+        handle_drop(&ui, &state, files);
     }
 
     ui.run()

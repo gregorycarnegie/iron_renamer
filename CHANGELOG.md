@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.3.3 - 2026-07-17
+
+- Fixed the GUI freezing for many seconds when dropping a large number of files, especially from network shares: the drop is now processed as a single batch, folder lookups are batched per directory and run in parallel, and the scan happens off the UI thread with a "scanning…" status while the list fills in.
+
 ## 0.3.1 - 2026-07-16
 
 - Made large rename chains scale linearly instead of quadratically.

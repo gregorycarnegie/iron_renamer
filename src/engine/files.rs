@@ -1,7 +1,44 @@
 use std::{
+    collections::HashMap,
+    ffi::OsString,
     fs,
     path::{Path, PathBuf},
+    sync::{
+        Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
 };
+
+/// Entry names (and whether each is a directory) for several folders,
+/// enumerated in parallel. On network shares every read_dir is a round trip
+/// (~25ms+), so scanning many folders serially adds whole seconds.
+pub fn list_dirs(dirs: Vec<PathBuf>) -> HashMap<PathBuf, Vec<(OsString, bool)>> {
+    let next = AtomicUsize::new(0);
+    let out = Mutex::new(HashMap::new());
+    // ponytail: fixed cap of 16 workers; tune if enormous drops ever crawl
+    std::thread::scope(|s| {
+        for _ in 0..dirs.len().min(16) {
+            s.spawn(|| {
+                while let Some(d) = dirs.get(next.fetch_add(1, Ordering::Relaxed)) {
+                    let entries: Vec<(OsString, bool)> = fs::read_dir(d)
+                        .into_iter()
+                        .flatten()
+                        .flatten()
+                        .map(|e| {
+                            // only symlink/junction entries pay a real stat
+                            let is_dir = e
+                                .file_type()
+                                .is_ok_and(|t| t.is_dir() || (t.is_symlink() && e.path().is_dir()));
+                            (e.file_name(), is_dir)
+                        })
+                        .collect();
+                    out.lock().unwrap().insert(d.clone(), entries);
+                }
+            });
+        }
+    });
+    out.into_inner().unwrap()
+}
 
 // ───────────────────────── sorting and globbing
 
@@ -63,11 +100,14 @@ pub fn expand(arg: &str, dirs: bool) -> Vec<PathBuf> {
     if let Ok(entries) = fs::read_dir(&dir) {
         for e in entries.flatten() {
             let n = e.file_name().to_string_lossy().into_owned();
-            let kind_ok = if dirs {
-                e.path().is_dir()
-            } else {
-                e.path().is_file()
-            };
+            // read_dir already knows the entry kind; only symlinks need a stat
+            let kind_ok = e.file_type().is_ok_and(|t| {
+                if dirs {
+                    t.is_dir() || (t.is_symlink() && e.path().is_dir())
+                } else {
+                    t.is_file() || (t.is_symlink() && e.path().is_file())
+                }
+            });
             if kind_ok && wild_match(&pat.to_lowercase(), &n.to_lowercase()) {
                 out.push(if dir.as_os_str() == "." {
                     PathBuf::from(n)
@@ -112,12 +152,14 @@ impl Masks {
 pub fn collect_dir(dir: &Path, recurse: bool, masks: &Masks, out: &mut Vec<PathBuf>) {
     if let Ok(entries) = fs::read_dir(dir) {
         for e in entries.flatten() {
+            let Ok(t) = e.file_type() else { continue };
             let p = e.path();
-            if p.is_dir() {
+            // read_dir already knows the entry kind; only symlinks need a stat
+            if t.is_dir() || (t.is_symlink() && p.is_dir()) {
                 if recurse {
                     collect_dir(&p, true, masks, out);
                 }
-            } else if p.is_file() && masks.pass(&name_of(&p)) {
+            } else if (t.is_file() || p.is_file()) && masks.pass(&name_of(&p)) {
                 out.push(p);
             }
         }
