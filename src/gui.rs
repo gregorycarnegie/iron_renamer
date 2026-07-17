@@ -322,7 +322,8 @@ pub fn run(initial: Vec<PathBuf>) -> Result<(), slint::PlatformError> {
                     // unrelated click happens to resync it. Force the reset directly
                     // whenever focus changes or a resize/move settles.
                     WindowEvent::Focused(_) | WindowEvent::Resized(_) | WindowEvent::Moved(_) => {
-                        ui.window().dispatch_event(slint::platform::WindowEvent::PointerExited);
+                        ui.window()
+                            .dispatch_event(slint::platform::WindowEvent::PointerExited);
                     }
                     _ => {}
                 }
