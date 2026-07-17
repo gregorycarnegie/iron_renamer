@@ -311,10 +311,21 @@ pub fn run(initial: Vec<PathBuf>) -> Result<(), slint::PlatformError> {
         let weak = ui.as_weak();
         let st = state.clone();
         ui.window().on_winit_window_event(move |_, ev| {
-            if let WindowEvent::DroppedFile(path) = ev
-                && let Some(ui) = weak.upgrade()
-            {
-                handle_drop(&ui, &st, path.clone());
+            if let Some(ui) = weak.upgrade() {
+                match ev {
+                    WindowEvent::DroppedFile(path) => handle_drop(&ui, &st, path.clone()),
+                    // The custom title bar's move/resize (`drag_window` /
+                    // `drag_resize_window` above) and focus changes hand the pointer
+                    // to the window manager for a while; on Linux winit doesn't
+                    // always see the matching button-release when it gets control
+                    // back, so Slint's grab/hover state can get stuck until some
+                    // unrelated click happens to resync it. Force the reset directly
+                    // whenever focus changes or a resize/move settles.
+                    WindowEvent::Focused(_) | WindowEvent::Resized(_) | WindowEvent::Moved(_) => {
+                        ui.window().dispatch_event(slint::platform::WindowEvent::PointerExited);
+                    }
+                    _ => {}
+                }
             }
             EventResult::Propagate
         });
