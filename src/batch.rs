@@ -134,6 +134,7 @@ fn reserved(name: &str) -> bool {
 
 /// Characters Windows forbids in file names (shared with tag sanitizing).
 pub(crate) const INVALID_CHARS: [char; 9] = ['<', '>', ':', '"', '/', '\\', '|', '?', '*'];
+const MAX_WINDOWS_PATH_LEN: usize = 259; // MAX_PATH minus the terminating null
 
 pub fn name_issue(name: &str) -> Option<String> {
     if name.is_empty() {
@@ -331,7 +332,7 @@ pub fn plan(files: &[PathBuf], cfg: &BatchCfg) -> Vec<PlanItem> {
                 && std::path::absolute(&target)
                     .map(|t| t.as_os_str().len())
                     .unwrap_or(0)
-                    > 259
+                    > MAX_WINDOWS_PATH_LEN
             {
                 issue = Some("path too long".into());
             }
@@ -383,8 +384,7 @@ fn transfer(from: &Path, to: &Path, mode: Mode) -> io::Result<()> {
     match mode {
         Mode::Copy => fs::copy(from, to).map(|_| ()),
         Mode::Rename | Mode::Move => fs::rename(from, to).or_else(|e| {
-            // ERROR_NOT_SAME_DEVICE (17) on Windows, EXDEV (18) on Linux.
-            if mode == Mode::Move && matches!(e.raw_os_error(), Some(17) | Some(18)) {
+            if mode == Mode::Move && e.kind() == io::ErrorKind::CrossesDevices {
                 fs::copy(from, to)?;
                 fs::remove_file(from)
             } else {
