@@ -1,5 +1,5 @@
 // Metadata fields backed by a user-installed ExifTool (deliberately not
-// bundled — see todo.md). Located via the IRON_RENAMER_EXIFTOOL env var or
+// bundled). Located via the IRON_RENAMER_EXIFTOOL env var or
 // as "exiftool" on PATH. All fields of a file are read in one call and
 // cached for the session.
 

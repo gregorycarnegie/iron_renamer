@@ -3,11 +3,17 @@
 ## 0.3.4 - 2026-07-17
 
 - Header now shows the app icon instead of a hand-drawn anvil mark.
+- Fixed Copy and Move for folder batches, including cross-volume moves.
 - Internal cleanup: the GUI and the batch planner now share one per-folder listing cache, and file masks compile to regexes once instead of using a hand-rolled matcher (also removes its pathological slowdown on masks like `*a*a*a*`).
 
 ## 0.3.3 - 2026-07-17
 
 - Fixed the GUI freezing for many seconds when dropping a large number of files, especially from network shares: the drop is now processed as a single batch, folder lookups are batched per directory and run in parallel, and the scan happens off the UI thread with a "scanning…" status while the list fills in.
+
+## 0.3.2 - 2026-07-16
+
+- Added an About dialog with the app version and Slint attribution.
+- Added Windows and Linux ARM64 release builds and Windows MSIX packages.
 
 ## 0.3.1 - 2026-07-16
 

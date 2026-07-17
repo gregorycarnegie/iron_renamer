@@ -223,6 +223,45 @@ fn copy_and_move_modes() {
     assert!(res.failed.is_empty());
     assert!(!b.exists());
     assert_eq!(read(&sub.join("b.txt")), "B");
+
+    // Folder copies recurse; the same copy/remove path backs cross-volume moves.
+    let tree = d.join("tree");
+    fs::create_dir_all(tree.join("nested")).unwrap();
+    put(&tree.join("nested"), "c.txt", "C");
+    let copied = d.join("copied-tree");
+    let res = execute(
+        vec![Op {
+            from: tree.clone(),
+            to: copied.clone(),
+        }],
+        Mode::Copy,
+    );
+    assert!(res.failed.is_empty());
+    assert_eq!(read(&tree.join("nested/c.txt")), "C");
+    assert_eq!(read(&copied.join("nested/c.txt")), "C");
+
+    let moved = d.join("moved-tree");
+    let res = execute(
+        vec![Op {
+            from: copied.clone(),
+            to: moved.clone(),
+        }],
+        Mode::Move,
+    );
+    assert!(res.failed.is_empty());
+    assert!(!copied.exists());
+    assert_eq!(read(&moved.join("nested/c.txt")), "C");
+
+    let inside = tree.join("inside/tree");
+    let res = execute(
+        vec![Op {
+            from: tree.clone(),
+            to: inside.clone(),
+        }],
+        Mode::Copy,
+    );
+    assert_eq!(res.failed.len(), 1);
+    assert!(!inside.exists());
 }
 
 #[test]

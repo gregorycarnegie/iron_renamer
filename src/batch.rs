@@ -376,22 +376,69 @@ pub fn finals(items: &[PlanItem], res: &ExecResult) -> Vec<PathBuf> {
 }
 
 fn transfer(from: &Path, to: &Path, mode: Mode) -> io::Result<()> {
+    if mode != Mode::Rename
+        && from.is_dir()
+        && std::path::absolute(to)?.starts_with(std::path::absolute(from)?)
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "cannot copy or move a folder inside itself",
+        ));
+    }
     if let Some(dir) = to.parent()
         && !dir.as_os_str().is_empty()
     {
         fs::create_dir_all(dir)?;
     }
     match mode {
-        Mode::Copy => fs::copy(from, to).map(|_| ()),
+        Mode::Copy => copy_path(from, to),
         Mode::Rename | Mode::Move => fs::rename(from, to).or_else(|e| {
             if mode == Mode::Move && e.kind() == io::ErrorKind::CrossesDevices {
-                fs::copy(from, to)?;
-                fs::remove_file(from)
+                copy_path(from, to)?;
+                let removed = if from.is_dir() {
+                    fs::remove_dir_all(from)
+                } else {
+                    fs::remove_file(from)
+                };
+                removed.map_err(|e| {
+                    io::Error::new(
+                        e.kind(),
+                        format!("copied to target but could not remove source: {e}"),
+                    )
+                })
             } else {
                 Err(e)
             }
         }),
     }
+}
+
+fn copy_path(from: &Path, to: &Path) -> io::Result<()> {
+    let kind = fs::symlink_metadata(from)?.file_type();
+    // ponytail: reject links to avoid directory cycles; add platform-specific
+    // link recreation if users need copied links rather than copied data.
+    if kind.is_symlink() {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "copying symbolic links is not supported",
+        ));
+    }
+    if !kind.is_dir() {
+        return fs::copy(from, to).map(|_| ());
+    }
+
+    fs::create_dir(to)?;
+    let result = (|| {
+        for entry in fs::read_dir(from)? {
+            let entry = entry?;
+            copy_path(&entry.path(), &to.join(entry.file_name()))?;
+        }
+        fs::set_permissions(to, fs::metadata(from)?.permissions())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_dir_all(to);
+    }
+    result
 }
 
 /// Execute a batch safely. For rename/move: ops blocked by another pending
