@@ -319,7 +319,7 @@ mod tests {
         let p = tmp("roundtrip.wav");
         write_wav(&p);
         set(
-            &[p.clone()],
+            std::slice::from_ref(&p),
             &["artist=Iron Maiden".into(), "title=Run".into()],
         )
         .unwrap();
