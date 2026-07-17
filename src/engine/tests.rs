@@ -13,9 +13,9 @@ proptest! {
 
     #[test]
     fn wildcard_matches_itself_and_star_matches_all(s in any::<String>()) {
-        prop_assert!(wild_match("*", &s));
+        prop_assert!(mask_re("*").is_match(&s));
         if !s.contains(['*', '?']) {
-            prop_assert!(wild_match(&s, &s));
+            prop_assert!(mask_re(&s).is_match(&s));
         }
     }
 }
@@ -338,9 +338,9 @@ fn natural_sort_and_glob() {
     let mut v = vec!["img10.jpg", "img9.jpg", "img1.jpg"];
     v.sort_by_key(|a| natural_key(a));
     assert_eq!(v, vec!["img1.jpg", "img9.jpg", "img10.jpg"]);
-    assert!(wild_match("*.jpg", "photo.jpg"));
-    assert!(wild_match("img?.png", "img1.png"));
-    assert!(!wild_match("*.jpg", "photo.png"));
+    assert!(mask_re("*.jpg").is_match("photo.jpg"));
+    assert!(mask_re("img?.png").is_match("img1.png"));
+    assert!(!mask_re("*.jpg").is_match("photo.png"));
 }
 
 #[test]

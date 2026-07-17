@@ -10,8 +10,8 @@ mod parse;
 pub use apply::{apply_entry, reset_js, split_ext};
 pub(crate) use apply::{change_case, join_ext};
 #[cfg(test)]
-use files::wild_match;
-pub use files::{Masks, collect_dir, expand, list_dirs, name_of, natural_key, sort_files};
+use files::mask_re;
+pub use files::{FsKinds, Masks, collect_dir, expand, name_of, natural_key, sort_files};
 pub use parse::{build_cond, build_rule};
 
 // ───────────────────────── rule model

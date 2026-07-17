@@ -1,8 +1,9 @@
 # Changelog
 
-## Unreleased
+## 0.3.4 - 2026-07-17
 
 - Header now shows the app icon instead of a hand-drawn anvil mark.
+- Internal cleanup: the GUI and the batch planner now share one per-folder listing cache, and file masks compile to regexes once instead of using a hand-rolled matcher (also removes its pathological slowdown on masks like `*a*a*a*`).
 
 ## 0.3.3 - 2026-07-17
 

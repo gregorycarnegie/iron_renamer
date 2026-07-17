@@ -2,7 +2,9 @@
 
 use crate::{
     batch::{self, BatchCfg, Collision, Mode, Op},
-    engine::{Masks, RuleEntry, build_rule, collect_dir, name_of, natural_key, sort_files},
+    engine::{
+        FsKinds, Masks, RuleEntry, build_rule, collect_dir, name_of, natural_key, sort_files,
+    },
 };
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 use std::{
@@ -148,7 +150,7 @@ fn parse_list(body: &str) -> (Vec<PathBuf>, bool, usize) {
         .collect();
     let total = paths.len();
     let mut kinds = FsKinds::new();
-    kinds.warm(&paths);
+    kinds.warm_parents(&paths);
     let dirs_mode = !paths.is_empty() && paths.iter().all(|p| kinds.kind(p) == Some(true));
     let want = Some(dirs_mode);
     let keep: Vec<PathBuf> = paths
@@ -195,64 +197,6 @@ fn specs_from_preset(rules: Vec<(String, String, String, String)>) -> (Vec<RuleS
     (specs, bad)
 }
 
-// Path::is_dir()/is_file() open a handle per file, which crawls on some
-// storage/AV setups (~25ms each); one read_dir per parent classifies every
-// sibling in a single pass. Some(true)=dir, Some(false)=file, None=missing.
-struct FsKinds {
-    map: HashMap<PathBuf, HashMap<std::ffi::OsString, bool>>,
-}
-
-impl FsKinds {
-    fn new() -> Self {
-        Self {
-            map: HashMap::new(),
-        }
-    }
-
-    // Enumerate all not-yet-cached parent folders in parallel up front —
-    // serial round trips to a network share add whole seconds.
-    fn warm(&mut self, paths: &[PathBuf]) {
-        let dirs: Vec<PathBuf> = paths
-            .iter()
-            .filter_map(|p| p.parent())
-            .filter(|d| !d.as_os_str().is_empty() && !self.map.contains_key(*d))
-            .map(Path::to_path_buf)
-            .collect::<std::collections::HashSet<_>>()
-            .into_iter()
-            .collect();
-        for (d, entries) in crate::engine::list_dirs(dirs) {
-            self.map.insert(d, entries.into_iter().collect());
-        }
-    }
-
-    fn kind(&mut self, p: &Path) -> Option<bool> {
-        let (Some(parent), Some(name)) = (p.parent(), p.file_name()) else {
-            return p.is_dir().then_some(true); // drive roots etc.
-        };
-        if parent.as_os_str().is_empty() {
-            return std::fs::metadata(p).ok().map(|m| m.is_dir());
-        }
-        let map = self.map.entry(parent.to_path_buf()).or_insert_with(|| {
-            std::fs::read_dir(parent)
-                .into_iter()
-                .flatten()
-                .flatten()
-                .map(|e| {
-                    // ponytail: only symlink/junction entries pay a real stat
-                    let is_dir = e
-                        .file_type()
-                        .is_ok_and(|t| t.is_dir() || (t.is_symlink() && e.path().is_dir()));
-                    (e.file_name(), is_dir)
-                })
-                .collect()
-        });
-        // Case mismatches and unreadable parents fall back to a single stat.
-        map.get(name)
-            .copied()
-            .or_else(|| std::fs::metadata(p).ok().map(|m| m.is_dir()))
-    }
-}
-
 // What a background drop scan found, ready to apply on the UI thread.
 struct DropScan {
     add: Vec<PathBuf>,
@@ -279,7 +223,7 @@ fn handle_drop(ui: &MainWindow, st: &Rc<RefCell<State>>, paths: Vec<PathBuf>) {
         let slot = slot.clone();
         std::thread::spawn(move || {
             let mut kinds = FsKinds::new();
-            kinds.warm(&paths);
+            kinds.warm_parents(&paths);
             let mut scan = DropScan {
                 add: Vec::new(),
                 folder_mode,

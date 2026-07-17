@@ -1,6 +1,6 @@
+use regex::Regex;
 use std::{
-    collections::HashMap,
-    ffi::OsString,
+    collections::{HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
     sync::{
@@ -9,10 +9,27 @@ use std::{
     },
 };
 
-/// Entry names (and whether each is a directory) for several folders,
-/// enumerated in parallel. On network shares every read_dir is a round trip
-/// (~25ms+), so scanning many folders serially adds whole seconds.
-pub fn list_dirs(dirs: Vec<PathBuf>) -> HashMap<PathBuf, Vec<(OsString, bool)>> {
+/// Lowercased entry names -> is_dir for one folder. One read_dir answers
+/// every sibling lookup — a stat per path crawls on some storage/AV setups
+/// (~25ms each); only symlink/junction entries pay a real stat.
+fn dir_entries(d: &Path) -> HashMap<String, bool> {
+    fs::read_dir(d)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| {
+            let is_dir = e
+                .file_type()
+                .is_ok_and(|t| t.is_dir() || (t.is_symlink() && e.path().is_dir()));
+            (e.file_name().to_string_lossy().to_lowercase(), is_dir)
+        })
+        .collect()
+}
+
+/// Enumerate several folders in parallel. On network shares every read_dir
+/// is a round trip (~25ms+), so scanning many folders serially adds whole
+/// seconds.
+fn list_dirs(dirs: Vec<PathBuf>) -> HashMap<PathBuf, HashMap<String, bool>> {
     let next = AtomicUsize::new(0);
     let out = Mutex::new(HashMap::new());
     // ponytail: fixed cap of 16 workers; tune if enormous drops ever crawl
@@ -20,24 +37,81 @@ pub fn list_dirs(dirs: Vec<PathBuf>) -> HashMap<PathBuf, Vec<(OsString, bool)>> 
         for _ in 0..dirs.len().min(16) {
             s.spawn(|| {
                 while let Some(d) = dirs.get(next.fetch_add(1, Ordering::Relaxed)) {
-                    let entries: Vec<(OsString, bool)> = fs::read_dir(d)
-                        .into_iter()
-                        .flatten()
-                        .flatten()
-                        .map(|e| {
-                            // only symlink/junction entries pay a real stat
-                            let is_dir = e
-                                .file_type()
-                                .is_ok_and(|t| t.is_dir() || (t.is_symlink() && e.path().is_dir()));
-                            (e.file_name(), is_dir)
-                        })
-                        .collect();
+                    let entries = dir_entries(d);
                     out.lock().unwrap().insert(d.clone(), entries);
                 }
             });
         }
     });
     out.into_inner().unwrap()
+}
+
+/// Per-folder listing cache shared by the GUI (classifying dropped/listed
+/// paths) and the batch planner (collision checks). Names match
+/// case-insensitively, like NTFS.
+pub struct FsKinds {
+    map: HashMap<PathBuf, HashMap<String, bool>>,
+}
+
+impl FsKinds {
+    pub fn new() -> Self {
+        Self {
+            map: HashMap::new(),
+        }
+    }
+
+    /// Enumerate all not-yet-cached folders in parallel up front — serial
+    /// round trips to a network share add whole seconds.
+    pub fn warm(&mut self, dirs: impl IntoIterator<Item = PathBuf>) {
+        let dirs: Vec<PathBuf> = dirs
+            .into_iter()
+            .filter(|d| !d.as_os_str().is_empty() && !self.map.contains_key(d))
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect();
+        self.map.extend(list_dirs(dirs));
+    }
+
+    /// Warm the parents of `paths`, ready to classify each path cheaply.
+    pub fn warm_parents(&mut self, paths: &[PathBuf]) {
+        self.warm(
+            paths
+                .iter()
+                .filter_map(|p| p.parent().map(Path::to_path_buf)),
+        );
+    }
+
+    fn dir(&mut self, d: &Path) -> &HashMap<String, bool> {
+        self.map
+            .entry(d.to_path_buf())
+            .or_insert_with(|| dir_entries(d))
+    }
+
+    /// Some(true)=dir, Some(false)=file, None=missing.
+    // ponytail: case-insensitive keys — a Linux folder holding both "A" and
+    // "a" can misclassify; the stat fallback still covers unreadable parents.
+    pub fn kind(&mut self, p: &Path) -> Option<bool> {
+        let (Some(parent), Some(name)) = (p.parent(), p.file_name()) else {
+            return p.is_dir().then_some(true); // drive roots etc.
+        };
+        if parent.as_os_str().is_empty() {
+            return fs::metadata(p).ok().map(|m| m.is_dir());
+        }
+        self.dir(parent)
+            .get(&name.to_string_lossy().to_lowercase())
+            .copied()
+            .or_else(|| fs::metadata(p).ok().map(|m| m.is_dir()))
+    }
+
+    /// Whether `p` exists on disk, matching the name case-insensitively.
+    pub fn exists(&mut self, p: &Path) -> bool {
+        match (p.parent(), p.file_name()) {
+            (Some(d), Some(n)) if !d.as_os_str().is_empty() => self
+                .dir(d)
+                .contains_key(&n.to_string_lossy().to_lowercase()),
+            _ => p.exists(),
+        }
+    }
 }
 
 // ───────────────────────── sorting and globbing
@@ -90,7 +164,7 @@ pub fn expand(arg: &str, dirs: bool) -> Vec<PathBuf> {
         return vec![PathBuf::from(arg)];
     }
     let p = PathBuf::from(arg);
-    let pat = name_of(&p);
+    let re = mask_re(&name_of(&p));
     let dir = p
         .parent()
         .filter(|d| !d.as_os_str().is_empty())
@@ -108,7 +182,7 @@ pub fn expand(arg: &str, dirs: bool) -> Vec<PathBuf> {
                     t.is_file() || (t.is_symlink() && e.path().is_file())
                 }
             });
-            if kind_ok && wild_match(&pat.to_lowercase(), &n.to_lowercase()) {
+            if kind_ok && re.is_match(&n) {
                 out.push(if dir.as_os_str() == "." {
                     PathBuf::from(n)
                 } else {
@@ -123,10 +197,17 @@ pub fn expand(arg: &str, dirs: bool) -> Vec<PathBuf> {
     out
 }
 
+/// Wildcard mask ("*.jpg", "img?") as an anchored, case-insensitive regex.
+/// (?s) so '*'/'?' also cover the '\n' Unix allows in file names.
+pub(super) fn mask_re(pat: &str) -> Regex {
+    let body = regex::escape(pat).replace(r"\*", ".*").replace(r"\?", ".");
+    Regex::new(&format!("(?is)^{body}$")).unwrap()
+}
+
 /// Include/exclude filename masks: "*.jpg;*.png;!*thumb*".
 pub struct Masks {
-    inc: Vec<String>,
-    exc: Vec<String>,
+    inc: Vec<Regex>,
+    exc: Vec<Regex>,
 }
 
 impl Masks {
@@ -134,17 +215,16 @@ impl Masks {
         let (mut inc, mut exc) = (Vec::new(), Vec::new());
         for m in s.split(';').map(str::trim).filter(|m| !m.is_empty()) {
             match m.strip_prefix('!') {
-                Some(x) => exc.push(x.to_lowercase()),
-                None => inc.push(m.to_lowercase()),
+                Some(x) => exc.push(mask_re(x)),
+                None => inc.push(mask_re(m)),
             }
         }
         Masks { inc, exc }
     }
 
     pub fn pass(&self, name: &str) -> bool {
-        let n = name.to_lowercase();
-        (self.inc.is_empty() || self.inc.iter().any(|m| wild_match(m, &n)))
-            && !self.exc.iter().any(|m| wild_match(m, &n))
+        (self.inc.is_empty() || self.inc.iter().any(|m| m.is_match(name)))
+            && !self.exc.iter().any(|m| m.is_match(name))
     }
 }
 
@@ -164,20 +244,6 @@ pub fn collect_dir(dir: &Path, recurse: bool, masks: &Masks, out: &mut Vec<PathB
             }
         }
     }
-}
-
-pub fn wild_match(pat: &str, s: &str) -> bool {
-    fn go(p: &[char], t: &[char]) -> bool {
-        match (p.first(), t.first()) {
-            (None, None) => true,
-            (Some('*'), _) => go(&p[1..], t) || (!t.is_empty() && go(p, &t[1..])),
-            (Some('?'), Some(_)) => go(&p[1..], &t[1..]),
-            (Some(a), Some(b)) if a == b => go(&p[1..], &t[1..]),
-            _ => false,
-        }
-    }
-    let (p, t): (Vec<char>, Vec<char>) = (pat.chars().collect(), s.chars().collect());
-    go(&p, &t)
 }
 
 pub fn name_of(p: &Path) -> String {
