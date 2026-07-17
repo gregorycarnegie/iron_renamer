@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Header now shows the app icon instead of a hand-drawn anvil mark.
+
 ## 0.3.3 - 2026-07-17
 
 - Fixed the GUI freezing for many seconds when dropping a large number of files, especially from network shares: the drop is now processed as a single batch, folder lookups are batched per directory and run in parallel, and the scan happens off the UI thread with a "scanning…" status while the list fills in.
