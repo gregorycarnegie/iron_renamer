@@ -152,7 +152,7 @@ cargo test
 | `src/batch.rs`   | Shared planner/executor: validation, collision policies, chain/swap-safe rename/copy/move, dated undo history, preview export + tests |
 | `src/presets.rs` | Preset files and CSV/JSON helpers + tests          |
 | `src/cli.rs`     | CLI front-end                                |
-| `src/gui.rs`     | GUI state and callbacks                      |
+| `src/gui.rs`, `src/gui/` | GUI setup, state, callbacks, and preview       |
 | `ui/main.slint`  | All UI markup and styling                    |
 
 ## Not included (on purpose)
