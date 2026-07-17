@@ -81,15 +81,17 @@ fn read_fields(path: &Path) -> Option<Fields> {
                     T::Model => ("model", fmt_value(v)),
                     T::Software => ("software", fmt_value(v)),
                     T::CreateDate => ("createdate", fmt_value(v)),
-                    T::DurationMs => ("duration", match v {
-                        EntryValue::U64(ms) => Some(fmt_duration(ms / 1000)),
-                        _ => None,
-                    }),
+                    T::DurationMs => (
+                        "duration",
+                        match v {
+                            EntryValue::U64(ms) => Some(fmt_duration(ms / 1000)),
+                            _ => None,
+                        },
+                    ),
                     T::Width => ("imagewidth", fmt_value(v)),
                     T::Height => ("imageheight", fmt_value(v)),
                     T::Author => ("author", fmt_value(v)),
                     _ => continue, // GpsIso6709: parsed form below
-
                 };
                 if let Some(v) = v {
                     map.insert(name.into(), v);
@@ -253,7 +255,10 @@ fn set_audio(path: &Path, assigns: &[(String, &str)]) -> Result<(), String> {
     let tag = tf.primary_tag_mut().unwrap();
     for (name, v) in assigns {
         let v = v.to_string();
-        let num = || v.parse::<u32>().map_err(|_| format!("{name} needs a number"));
+        let num = || {
+            v.parse::<u32>()
+                .map_err(|_| format!("{name} needs a number"))
+        };
         match name.as_str() {
             "artist" => tag.set_artist(v),
             "album" => tag.set_album(v),
@@ -313,7 +318,11 @@ mod tests {
     fn audio_tag_roundtrip() {
         let p = tmp("roundtrip.wav");
         write_wav(&p);
-        set(&[p.clone()], &["artist=Iron Maiden".into(), "title=Run".into()]).unwrap();
+        set(
+            &[p.clone()],
+            &["artist=Iron Maiden".into(), "title=Run".into()],
+        )
+        .unwrap();
         // read back through the public API (cache is cold: set ran first)
         assert_eq!(get(&p, "Artist").as_deref(), Some("Iron Maiden"));
         assert_eq!(get(&p, "title").as_deref(), Some("Run"));
