@@ -26,7 +26,7 @@ RULES are applied in order given. Every rule flag takes suffix mods, e.g.
         dates (UTC) -- <now|created|modified|accessed[:FMT[:OFFSET]]>,
         FMT tokens yyyy yy MM dd HH mm ss or the literal FMT unix,
         OFFSET like +3d -12h
-        metadata (needs ExifTool on PATH or IRON_RENAMER_EXIFTOOL) --
+        metadata (built-in, no external tools) --
         <exif:TAG> plus <width> <height> <datetaken> <artist> <album>
         <track> <title> <duration> <author> <lat> <lon>
   JS:   --js runs a sandboxed script per item (no file/network access);
@@ -188,7 +188,7 @@ struct Cli {
         long = "set-meta",
         value_name = "TAG=VALUE",
         allow_hyphen_values = true,
-        help = "Write a metadata tag after the batch (needs ExifTool; repeatable)"
+        help = "Write a metadata tag after the batch (repeatable)"
     )]
     set_meta: Vec<String>,
     #[arg(short = 'd', long, help = "Rename folders instead of files")]

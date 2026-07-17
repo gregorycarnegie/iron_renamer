@@ -1,6 +1,6 @@
 [package]
 name = "iron_renamer"
-version = "0.3.4"
+version = "0.4.0"
 edition = "2024"
 license = "MIT"
 
@@ -16,6 +16,10 @@ sha1_smol = "1.0.1"
 regex = "1.13.1"
 slint = { version = "1.17.1", default-features = false, features = ["accessibility", "compat-1-2", "renderer-femtovg", "std", "unstable-winit-030"] } # winit feature: OS file drag-and-drop
 rfd = "0.17.2"
+nom-exif = "3.6.1"
+lofty = "0.24.0"
+imagesize = "0.15.0"
+little_exif = "0.6.23"
 
 [build-dependencies]
 slint-build = "1.17.1"

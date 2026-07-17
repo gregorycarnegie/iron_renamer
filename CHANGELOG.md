@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.0 - 2026-07-17
+
+- Metadata is now built in — ExifTool is no longer required (the `IRON_RENAMER_EXIFTOOL` setting is gone). `<exif:TAG>`, the metadata aliases, `--touch =exif`, and `--set-meta` all work out of the box via pure-Rust readers/writers.
+- `<width>`/`<height>` now work even for images without EXIF data (read from the file header).
+- Known limits vs ExifTool: no RAW-format or PDF/Office metadata (`<author>` still works for videos), and `--set-meta` supports a curated tag set — audio: artist, album, title, genre, comment, track, year, albumartist; images: artist, description, copyright, make, model, datetimeoriginal, createdate, software.
+
 ## 0.3.4 - 2026-07-17
 
 - Header now shows the app icon instead of a hand-drawn anvil mark.

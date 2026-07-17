@@ -25,13 +25,12 @@
 // Data        <csv:COL> — column COL (1-based number, or a header name)
 //             of the row matching the item's list position; rows are
 //             loaded by the frontend (--csv / GUI import)
-// Metadata    <exif:TAG> (any ExifTool tag) plus aliases <width> <height>
-//             <lat> <lon> (signed decimal GPS)
+// Metadata    <exif:TAG> (built-in readers, no external tools) plus aliases
+//             <width> <height> <lat> <lon> (signed decimal GPS)
 //             <datetaken> <artist> <album> <track> <title> <duration>
-//             <author> — need a user-installed ExifTool; values are
-//             sanitized for file names (':' becomes '-'). A tag missing
-//             from the file gives "" (so |fallback applies); without
-//             ExifTool the tag is left literal.
+//             <author> — values are sanitized for file names (':'
+//             becomes '-'). A tag missing from the file gives ""
+//             (so |fallback applies).
 // Modifiers   |upper |lower |title |sub:START[,LEN] |pad:N |trim[:CHARS]
 //             |replace:OLD[,NEW] |split:SEP,N (empty SEP = whitespace;
 //             N 1-based, negative from the end) |fallback:TEXT
@@ -191,7 +190,7 @@ fn eval(body: &str, full_name: &str, ctx: &Ctx) -> Option<String> {
         "title" => meta_alias(ctx, &["title"])?,
         "duration" => meta_alias(ctx, &["duration"])?,
         "author" => meta_alias(ctx, &["author", "creator"])?,
-        // Signed decimal via the -c format passed to ExifTool (see meta.rs).
+        // Signed decimal degrees (see meta.rs insert_gps).
         "lat" => meta_alias(ctx, &["gpslatitude"])?,
         "lon" => meta_alias(ctx, &["gpslongitude"])?,
         _ => return None,
@@ -202,8 +201,8 @@ fn eval(body: &str, full_name: &str, ctx: &Ctx) -> Option<String> {
     Some(val)
 }
 
-// First non-empty of several ExifTool field names; "" when the file simply
-// lacks them all (so |fallback applies), None when ExifTool is unavailable.
+// First non-empty of several metadata field names; "" when the file simply
+// lacks them all (so |fallback applies), None when the file is unreadable.
 fn meta_alias(ctx: &Ctx, names: &[&str]) -> Option<String> {
     for n in names {
         let v = crate::meta::get(ctx.path, n)?;
@@ -777,18 +776,13 @@ mod tests {
     }
 
     #[test]
-    fn metadata_tags_via_exiftool() {
-        // Only runs when ExifTool is reachable (PATH or IRON_RENAMER_EXIFTOOL).
-        if !crate::meta::available() {
-            eprintln!("skipped: exiftool not available");
-            return;
-        }
-        let dir = std::env::temp_dir().join(format!("iron_meta_{}", std::process::id()));
+    fn metadata_tags() {
+        let dir = std::env::temp_dir().join(format!("iron_tagmeta_{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
         let p = dir.join("data.txt");
         fs::write(&p, "hello").unwrap();
         let c = ctx(&p, "data.txt");
-        // ExifTool reports File: fields for any file type.
+        // FileType comes from the extension, so it works for any file.
         assert_eq!(expand("<exif:FileType>", "data.txt", &c), "TXT");
         // A tag the file lacks resolves to "" so |fallback applies.
         assert_eq!(

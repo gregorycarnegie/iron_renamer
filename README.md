@@ -83,7 +83,7 @@ RULES (applied in order given). Every rule flag takes suffix mods, e.g.
         dates (UTC): <now|created|modified|accessed[:FMT[:OFFSET]]>
           FMT tokens yyyy yy MM dd HH mm ss, or the literal FMT unix
           for epoch seconds · OFFSET like +3d -12h
-        metadata (needs ExifTool on PATH or IRON_RENAMER_EXIFTOOL):
+        metadata (built-in, no external tools):
           <exif:TAG> plus <width> <height> <datetaken> <artist> <album>
           <track> <title> <duration> <author> <lat> <lon>
   MODS: |upper |lower |title |sub:START[,LEN] |pad:N |trim[:CHARS]
@@ -109,8 +109,7 @@ OPTIONS:
   --pairs                      same-stem sidecars share the generated stem
   --touch <WHICH=VALUE>        set created|modified|accessed|all timestamps:
                                "2024-05-01 10:30" | +3d | name | parent | exif
-  --set-meta <TAG=VALUE>       write a metadata tag after the batch
-                               (needs ExifTool; repeatable)
+  --set-meta <TAG=VALUE>       write a metadata tag after the batch (repeatable)
   -d, --dirs                   rename folders instead of files
   -x, --apply                  actually rename (otherwise preview only)
 ```

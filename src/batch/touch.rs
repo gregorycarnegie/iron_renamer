@@ -12,7 +12,7 @@ pub enum TouchValue {
     Delta(i64),    // shift each selected field by this many seconds
     FromName,      // yyyy?MM?dd[?HH?mm[?ss]] extracted from the file name
     FromParent,    // ... extracted from the parent folder name
-    FromExif,      // DateTimeOriginal / CreateDate via ExifTool
+    FromExif,      // DateTimeOriginal / CreateDate from file metadata
 }
 
 pub struct TouchSpec {
@@ -115,7 +115,7 @@ fn touch_one(p: &Path, spec: &TouchSpec) -> Result<bool, String> {
             let v = crate::meta::get(p, "datetimeoriginal")
                 .filter(|v| !v.is_empty())
                 .or_else(|| crate::meta::get(p, "createdate"))
-                .ok_or("ExifTool not available")?;
+                .ok_or("file unreadable")?;
             tags::extract_datetime(&v).map(system_time)
         }
     };

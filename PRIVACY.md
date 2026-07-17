@@ -14,9 +14,8 @@ time by removing that folder. The data is protected by the security controls of
 the user's Windows account; Iron Renamer does not upload or otherwise disclose
 it.
 
-Optional metadata features invoke a user-installed copy of ExifTool locally.
-Iron Renamer does not send file data to ExifTool's developer or any online
-service.
+Metadata features are built into the application and read or write file
+metadata locally; no file data is sent to any online service.
 
 Questions about this policy can be submitted through the
 [Iron Renamer issue tracker](https://github.com/gregorycarnegie/iron_renamer/issues).
