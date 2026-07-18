@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.1 - 2026-07-19
+
+- Case-insensitive Replace and List Replace compile their matchers once instead of once per file (about 100× faster in the 100,000-operation benchmark).
+- Large previews reuse normalized path keys, making 10,000-file planning about 20% faster.
+
 ## 0.4.0 - 2026-07-17
 
 - Metadata is now built in — ExifTool is no longer required (the `IRON_RENAMER_EXIFTOOL` setting is gone). `<exif:TAG>`, the metadata aliases, `--touch =exif`, and `--set-meta` all work out of the box via pure-Rust readers/writers.
