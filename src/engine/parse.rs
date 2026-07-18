@@ -147,7 +147,7 @@ pub fn build_rule(kind: &str, mods: &[&str], a: &str, b: &str) -> Result<(Rule, 
             Rule::Replace {
                 find: a.into(),
                 repl: b.into(),
-                ci,
+                ci: ci.then(|| Regex::new(&format!("(?i){}", regex::escape(a))).unwrap()),
                 occ,
             }
         }
@@ -280,7 +280,7 @@ pub fn build_rule(kind: &str, mods: &[&str], a: &str, b: &str) -> Result<(Rule, 
             }
             // One pair per line: OLD=NEW (tab wins over '=' so either side
             // may contain '='). Blank lines and empty OLD are skipped.
-            let pairs: Vec<(String, String)> = a
+            let pairs: Vec<(String, String, Option<Regex>)> = a
                 .lines()
                 .filter_map(|l| {
                     let l = l.trim_end();
@@ -288,13 +288,17 @@ pub fn build_rule(kind: &str, mods: &[&str], a: &str, b: &str) -> Result<(Rule, 
                         Some(p) => p,
                         None => l.split_once('=')?,
                     };
-                    (!old.is_empty()).then(|| (old.to_string(), new.to_string()))
+                    (!old.is_empty()).then(|| {
+                        let re =
+                            ci.then(|| Regex::new(&format!("(?i){}", regex::escape(old))).unwrap());
+                        (old.to_string(), new.to_string(), re)
+                    })
                 })
                 .collect();
             if pairs.is_empty() {
                 return Err("pairs needs OLD=NEW lines".into());
             }
-            Rule::Pairs { pairs, ci }
+            Rule::Pairs { pairs }
         }
         "js" => {
             if let Some(m) = rest.first() {

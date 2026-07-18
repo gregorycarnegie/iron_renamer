@@ -79,7 +79,7 @@ pub enum Rule {
     Replace {
         find: String,
         repl: String,
-        ci: bool,
+        ci: Option<Regex>,
         occ: Occurrence,
     },
     Regex(Regex, String),
@@ -111,8 +111,7 @@ pub enum Rule {
     ListNames(Vec<String>), // one explicit new name per list position
     // Many find→replace pairs applied in order (AR's "List Replace").
     Pairs {
-        pairs: Vec<(String, String)>,
-        ci: bool,
+        pairs: Vec<(String, String, Option<Regex>)>,
     },
     Js(String), // sandboxed script; completion value = new name
 }

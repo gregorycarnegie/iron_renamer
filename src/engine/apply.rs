@@ -1,6 +1,5 @@
 use super::*;
 use crate::tags;
-use regex::Regex;
 
 // ───────────────────────── application
 
@@ -47,7 +46,7 @@ fn apply_rule(rule: &Rule, s: &str, full: &str, ctx: &Ctx) -> String {
             repl,
             ci,
             occ,
-        } => replace_occ(s, find, &tags::expand(repl, full, ctx), *ci, occ),
+        } => replace_occ(s, find, &tags::expand(repl, full, ctx), ci.as_ref(), occ),
         Rule::Regex(re, repl) => re
             .replace_all(s, tags::expand(repl, full, ctx).as_str())
             .into_owned(),
@@ -73,12 +72,12 @@ fn apply_rule(rule: &Rule, s: &str, full: &str, ctx: &Ctx) -> String {
             .get(ctx.index)
             .cloned()
             .unwrap_or_else(|| s.to_string()),
-        Rule::Pairs { pairs, ci } => pairs.iter().fold(s.to_string(), |acc, (old, new)| {
+        Rule::Pairs { pairs } => pairs.iter().fold(s.to_string(), |acc, (old, new, ci)| {
             replace_occ(
                 &acc,
                 old,
                 &tags::expand(new, full, ctx),
-                *ci,
+                ci.as_ref(),
                 &Occurrence::All,
             )
         }),
@@ -161,13 +160,18 @@ fn cond_matches(c: &Cond, current: &str, ctx: &Ctx) -> bool {
     hit != c.negate
 }
 
-fn replace_occ(s: &str, find: &str, repl: &str, ci: bool, occ: &Occurrence) -> String {
+fn replace_occ(
+    s: &str,
+    find: &str,
+    repl: &str,
+    ci: Option<&regex::Regex>,
+    occ: &Occurrence,
+) -> String {
     if find.is_empty() {
         return s.to_string();
     }
-    let ranges: Vec<(usize, usize)> = if ci {
+    let ranges: Vec<(usize, usize)> = if let Some(re) = ci {
         // Regex handles Unicode case folding; lowercasing can shift byte offsets.
-        let re = Regex::new(&format!("(?i){}", regex::escape(find))).unwrap();
         re.find_iter(s).map(|m| (m.start(), m.end())).collect()
     } else {
         s.match_indices(find)

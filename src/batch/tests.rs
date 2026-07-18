@@ -78,6 +78,29 @@ fn bench_chain_execute_and_finals() {
     }
 }
 
+// Perf guard for the GUI/CLI preview planner.
+// Run: cargo test --release -- --ignored bench_plan_preview --nocapture
+#[test]
+#[ignore]
+fn bench_plan_preview() {
+    const N: usize = 10_000;
+    let d = tmpdir("bench_plan");
+    let files: Vec<PathBuf> = (0..N)
+        .map(|i| put(&d, &format!("file_{i:06}.txt"), "x"))
+        .collect();
+    let rules = rules(&[("replace", "file", "photo")]);
+    let none = HashMap::new();
+    let cfg = BatchCfg::rename(&rules, 1, 1, &none);
+    for _ in 0..3 {
+        let start = std::time::Instant::now();
+        let items = plan(&files, &cfg);
+        assert_eq!(items.len(), N);
+        assert!(items.iter().all(|item| item.issue.is_none()));
+        println!("plan {N}: {:?}", start.elapsed());
+    }
+    let _ = fs::remove_dir_all(&d);
+}
+
 #[test]
 fn export_rows_formats_all_outputs() {
     let d = tmpdir("export");

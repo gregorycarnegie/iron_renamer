@@ -44,6 +44,35 @@ fn run(e: &RuleEntry, name: &str) -> String {
     apply_entry(e, name, &ctx)
 }
 
+// Run: cargo test --release -- --ignored bench_rule_application --nocapture
+#[test]
+#[ignore]
+fn bench_rule_application() {
+    const N: usize = 100_000;
+    let path = Path::new("C:/photos/trip/IMG_img_photo.jpg");
+    let ctx = Ctx {
+        index: 0,
+        num: 1,
+        pad: 0,
+        folder_num: 1,
+        total: N,
+        csv: &[],
+        path,
+        original: "IMG_img_photo.jpg",
+    };
+    for (label, rule) in [
+        ("literal", entry("replace", &[], "IMG", "pic")),
+        ("case-insensitive", entry("replace", &["ci"], "IMG", "pic")),
+    ] {
+        let start = std::time::Instant::now();
+        let bytes: usize = (0..N)
+            .map(|_| apply_entry(&rule, std::hint::black_box("IMG_img_photo.jpg"), &ctx).len())
+            .sum();
+        assert_eq!(bytes, N * 17);
+        println!("{label}: {:?}", start.elapsed());
+    }
+}
+
 #[test]
 fn replace_options() {
     assert_eq!(

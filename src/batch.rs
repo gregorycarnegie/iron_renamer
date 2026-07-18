@@ -175,6 +175,7 @@ pub fn plan(files: &[PathBuf], cfg: &BatchCfg) -> Vec<PlanItem> {
         name: String,
         dest_dir: PathBuf,
         changed: bool,
+        source_key: Option<String>,
     }
 
     // Pass 1: names and base targets.
@@ -241,19 +242,15 @@ pub fn plan(files: &[PathBuf], cfg: &BatchCfg) -> Vec<PlanItem> {
             name,
             dest_dir,
             changed,
+            source_key: changed.then(|| lower_abs(f)),
         });
     }
 
     // A target on disk is only a conflict if no batch item vacates that path.
-    let vacated: HashSet<String> = if cfg.mode == Mode::Copy {
+    let vacated: HashSet<&str> = if cfg.mode == Mode::Copy {
         HashSet::new()
     } else {
-        files
-            .iter()
-            .zip(&pre)
-            .filter(|(_, p)| p.changed)
-            .map(|(f, _)| lower_abs(f))
-            .collect()
+        pre.iter().filter_map(|p| p.source_key.as_deref()).collect()
     };
 
     // Pass 2: sequential collision resolution. On-disk checks go through a
@@ -277,20 +274,20 @@ pub fn plan(files: &[PathBuf], cfg: &BatchCfg) -> Vec<PlanItem> {
         };
         let mut name = p.name.clone();
         let mut target = p.dest_dir.join(&name);
+        let mut target_key = lower_abs(&target);
         let mut issue = name_issue(&name);
 
         if p.changed && issue.is_none() {
-            let self_lower = lower_abs(f);
+            let self_lower = p.source_key.as_deref().unwrap();
             let mut n = 1usize;
             loop {
-                let key = lower_abs(&target);
-                let is_self = key == self_lower;
+                let is_self = target_key == self_lower;
                 // In copy mode "the same file, different case" is still a
                 // collision; for rename it is a valid case-only rename.
                 let on_disk = disk.exists(&target)
-                    && !vacated.contains(&key)
+                    && !vacated.contains(target_key.as_str())
                     && (!is_self || cfg.mode == Mode::Copy);
-                let dup = taken.contains(&key);
+                let dup = taken.contains(&target_key);
                 if !on_disk && !dup {
                     break;
                 }
@@ -327,6 +324,7 @@ pub fn plan(files: &[PathBuf], cfg: &BatchCfg) -> Vec<PlanItem> {
                     break;
                 }
                 target = p.dest_dir.join(&name);
+                target_key = lower_abs(&target);
             }
             if issue.is_none()
                 && std::path::absolute(&target)
@@ -337,7 +335,7 @@ pub fn plan(files: &[PathBuf], cfg: &BatchCfg) -> Vec<PlanItem> {
                 issue = Some("path too long".into());
             }
         }
-        taken.insert(lower_abs(&target));
+        taken.insert(target_key);
         items.push(PlanItem {
             from: f.clone(),
             new_name: name,
