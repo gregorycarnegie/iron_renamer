@@ -86,6 +86,7 @@ pub(super) fn compute(ui: &MainWindow, s: &State) -> Computed {
                 .into(),
             status: status.into(),
             state,
+            selected: s.sel.contains(&i),
         });
     }
     Computed {
@@ -116,6 +117,7 @@ pub(super) fn refresh(ui: &MainWindow, s: &State) {
             .collect()
     };
     ui.set_files(ModelRc::new(VecModel::from(rows)));
+    ui.set_selection_count(s.sel.len() as i32);
     let rules: Vec<RuleRow> = s
         .rules
         .iter()

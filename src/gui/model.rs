@@ -2,7 +2,10 @@ use crate::{
     batch::Op,
     engine::{FsKinds, RuleEntry, build_rule, name_of, natural_key},
 };
-use std::{collections::HashMap, path::PathBuf};
+use std::{
+    collections::{BTreeSet, HashMap},
+    path::PathBuf,
+};
 
 #[derive(Clone)]
 pub(super) struct RuleSpec {
@@ -60,6 +63,8 @@ pub(super) struct State {
     pub(super) dirs: bool,                          // files or folders, never mixed
     pub(super) can_undo: bool,
     pub(super) editing: Option<usize>,
+    pub(super) sel: BTreeSet<usize>, // multi-selected row indices
+    pub(super) anchor: usize,        // shift-click range anchor
 }
 
 // New items arrive natural-sorted among themselves but never disturb the

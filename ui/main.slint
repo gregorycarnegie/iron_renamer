@@ -10,6 +10,7 @@ export struct FileRow {
     dir: string,
     status: string,
     state: int, // 0 unchanged, 1 changed, 2 error
+    selected: bool,
 }
 
 export struct RuleRow {
@@ -168,6 +169,37 @@ component EdgeGrip inherits TouchArea {
     }
 }
 
+// One entry in the themed right-click menu.
+component MenuRow inherits Rectangle {
+    in property <string> label;
+    in property <string> hint; // keyboard shortcut, right-aligned
+    in property <bool> danger: false;
+    callback clicked();
+    height: 28px;
+    border-radius: 4px;
+    background: ta.has-hover ? (danger ? #ff625915 : Palette.line-soft) : transparent;
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        spacing: 12px;
+        Text {
+            text: root.label;
+            color: root.danger ? Palette.error : Palette.text;
+            font-size: 12px;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+        }
+        Text {
+            text: root.hint;
+            color: Palette.faint;
+            font-size: 11px;
+            font-family: "Cascadia Mono";
+            vertical-alignment: center;
+        }
+    }
+    ta := TouchArea { clicked => { root.clicked(); } }
+}
+
 component SectionTitle inherits Text {
     color: Palette.faint;
     font-size: 10px;
@@ -233,7 +265,13 @@ export component MainWindow inherits Window {
     callback undo_batch();
     callback settings_changed();
     callback insert_tag(string);
-    callback row_clicked(int);
+    callback select_row(int, bool, bool); // index (-1 clears), ctrl, shift
+    callback row_right(int);              // right-click: ensure row is in selection
+    callback reveal_file(int);
+    callback keep_selected();
+    in property <int> selection_count: 0;
+    property <length> ctx_x; // where the right-click menu opens
+    property <length> ctx_y;
     callback save_list();
     callback load_list();
     callback remove_selected();
@@ -268,26 +306,23 @@ export component MainWindow inherits Window {
             if (e.modifiers.control && e.text == "z") { if (root.can_undo) { root.undo_batch(); } return accept; }
             if (e.modifiers.control && e.text == Key.Return) { if (root.changed > 0) { root.apply_batch(); } return accept; }
             if (e.text == Key.F2) { if (root.selected_row >= 0) { override-field.grab(); } return accept; }
-            if (e.text == Key.Delete) { if (root.selected_row >= 0) { root.remove_selected(); } return accept; }
+            if (e.text == Key.Delete) { if (root.selection_count > 0) { root.remove_selected(); } return accept; }
             if (e.text == Key.Escape) {
                 if (root.show_about) { root.show_about = false; return accept; }
-                root.selected_row = -1;
-                root.row_clicked(-1);
+                root.select_row(-1, false, false);
                 return accept;
             }
             if (e.text == Key.UpArrow) {
                 if (e.modifiers.control) { root.move_selected(-1); }
                 else if (root.files.length > 0) {
-                    root.selected_row = max(0, root.selected_row - 1);
-                    root.row_clicked(root.selected_row);
+                    root.select_row(max(0, root.selected_row - 1), false, e.modifiers.shift);
                 }
                 return accept;
             }
             if (e.text == Key.DownArrow) {
                 if (e.modifiers.control) { root.move_selected(1); }
                 else if (root.files.length > 0) {
-                    root.selected_row = min(root.files.length - 1, root.selected_row + 1);
-                    root.row_clicked(root.selected_row);
+                    root.select_row(min(root.files.length - 1, root.selected_row + 1), false, e.modifiers.shift);
                 }
                 return accept;
             }
@@ -918,9 +953,10 @@ export component MainWindow inherits Window {
                             spacing: 8px;
                             height: 30px;
                             Text {
-                                text: root.selected_row >= 0 ? "row " + (root.selected_row + 1) : "no row";
+                                text: root.selection_count > 1 ? root.selection_count + " sel"
+                                    : (root.selected_row >= 0 ? "row " + (root.selected_row + 1) : "no row");
                                 width: 52px;
-                                color: root.selected_row >= 0 ? Palette.amber : Palette.faint;
+                                color: root.selection_count > 0 || root.selected_row >= 0 ? Palette.amber : Palette.faint;
                                 font-size: 11px;
                                 font-family: "Cascadia Mono";
                                 vertical-alignment: center;
@@ -930,7 +966,7 @@ export component MainWindow inherits Window {
                                 mono: true;
                                 placeholder: root.selected_row >= 0
                                     ? "manual new name (blank = use rules)  (F2)"
-                                    : "click a row to select — ↑/↓ move selection, Ctrl+↑/↓ reorder, Del removes";
+                                    : "click a row to select — Ctrl/Shift+click for many, right-click for menu, Del removes";
                                 text <=> root.override_text;
                                 edited => { root.set_override(); }
                             }
@@ -977,7 +1013,7 @@ export component MainWindow inherits Window {
                             horizontal-alignment: center;
                         }
                         Text {
-                            text: "Ctrl+F search · ↑/↓ select · Ctrl+↑/↓ reorder · Del remove · F2 override · Ctrl+Z undo · Ctrl+Enter start";
+                            text: "Ctrl+F search · Ctrl/Shift+click multi-select · right-click menu · Del remove · F2 override · Ctrl+Z undo · Ctrl+Enter start";
                             color: Palette.faint;
                             font-size: 11px;
                             horizontal-alignment: center;
@@ -989,12 +1025,20 @@ export component MainWindow inherits Window {
                     vertical-stretch: 1;
                     for row in root.files : Rectangle {
                         height: 30px;
-                        background: root.selected_row == row.index ? #ffa02818
+                        background: row.selected ? #ffa02818
                             : (touch.has-hover ? Palette.line-soft : (mod(row.index, 2) == 0 ? transparent : #14161b));
                         touch := TouchArea {
-                            clicked => {
-                                root.selected_row = root.selected_row == row.index ? -1 : row.index;
-                                root.row_clicked(root.selected_row);
+                            pointer-event(ev) => {
+                                if (ev.kind == PointerEventKind.down) {
+                                    if (ev.button == PointerEventButton.left) {
+                                        root.select_row(row.index, ev.modifiers.control || ev.modifiers.meta, ev.modifiers.shift);
+                                    } else if (ev.button == PointerEventButton.right) {
+                                        root.row_right(row.index);
+                                        root.ctx_x = touch.absolute-position.x + touch.mouse-x;
+                                        root.ctx_y = touch.absolute-position.y + touch.mouse-y;
+                                        ctx-menu.show();
+                                    }
+                                }
                             }
                         }
                         HorizontalLayout {
@@ -1103,6 +1147,57 @@ export component MainWindow inherits Window {
             }
         }
     }
+    }
+
+    // ───────────────────────── right-click menu (themed; row_right() has
+    // already put the clicked row in the selection before show()).
+    ctx-menu := PopupWindow {
+        x: min(root.ctx_x, root.width - 216px);
+        y: min(root.ctx_y, root.height - menu-box.height - 8px);
+        menu-box := Rectangle {
+            width: 208px;
+            height: menu-col.min-height;
+            border-radius: 6px;
+            background: Palette.panel;
+            border-width: 1px;
+            border-color: Palette.line;
+            drop-shadow-blur: 24px;
+            drop-shadow-color: #00000088;
+            menu-col := VerticalLayout {
+                padding: 4px;
+                spacing: 1px;
+                if root.selection_count > 1 : MenuRow {
+                    label: "Remove " + root.selection_count + " selected";
+                    hint: "Del";
+                    danger: true;
+                    clicked => { root.remove_selected(); }
+                }
+                if root.selection_count > 1 : MenuRow {
+                    label: "Keep only selected";
+                    clicked => { root.keep_selected(); }
+                }
+                if root.selection_count > 1 : MenuRow {
+                    label: "Clear selection";
+                    hint: "Esc";
+                    clicked => { root.select_row(-1, false, false); }
+                }
+                if root.selection_count <= 1 : MenuRow {
+                    label: "Rename override";
+                    hint: "F2";
+                    clicked => { override-field.grab(); }
+                }
+                if root.selection_count <= 1 : MenuRow {
+                    label: "Show in Explorer";
+                    clicked => { root.reveal_file(root.selected_row); }
+                }
+                if root.selection_count <= 1 : MenuRow {
+                    label: "Remove";
+                    hint: "Del";
+                    danger: true;
+                    clicked => { root.remove_selected(); }
+                }
+            }
+        }
     }
 
     // ───────────────────────── about dialog

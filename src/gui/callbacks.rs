@@ -10,8 +10,13 @@ use crate::{
     batch::{self, Mode},
     engine::{Masks, collect_dir, sort_files},
 };
-use slint::{ComponentHandle, SharedString};
-use std::{cell::RefCell, fs, path::Path, rc::Rc};
+use slint::{ComponentHandle, Model, SharedString};
+use std::{
+    cell::RefCell,
+    fs,
+    path::{Path, PathBuf},
+    rc::Rc,
+};
 
 fn mode_blocked(ui: &MainWindow, s: &State, want_dirs: bool) -> bool {
     if !s.files.is_empty() && s.dirs != want_dirs {
@@ -26,6 +31,22 @@ fn mode_blocked(ui: &MainWindow, s: &State, want_dirs: bool) -> bool {
         return true;
     }
     false
+}
+
+// Flip only the `selected` flags on the existing rows — no preview recompute,
+// so click-selection stays instant on big lists.
+fn sync_selection(ui: &MainWindow, s: &State) {
+    let files = ui.get_files();
+    for i in 0..files.row_count() {
+        if let Some(mut row) = files.row_data(i) {
+            let want = s.sel.contains(&(row.index as usize));
+            if row.selected != want {
+                row.selected = want;
+                files.set_row_data(i, row);
+            }
+        }
+    }
+    ui.set_selection_count(s.sel.len() as i32);
 }
 
 pub(super) fn apply_preset(ui: &MainWindow, st: &Rc<RefCell<State>>, p: &Path) {
@@ -119,6 +140,7 @@ pub(super) fn wire(ui: &MainWindow, state: &Rc<RefCell<State>>) {
         let mut s = st.borrow_mut();
         s.files.clear();
         s.overrides.clear();
+        s.sel.clear();
         s.dirs = false;
         drop(s);
         ui.set_selected_row(-1);
@@ -170,6 +192,7 @@ pub(super) fn wire(ui: &MainWindow, state: &Rc<RefCell<State>>) {
         s.files = keep;
         s.dirs = dirs_mode;
         s.overrides.clear();
+        s.sel.clear();
         let n = s.files.len();
         drop(s);
         ui.set_selected_row(-1);
@@ -202,6 +225,7 @@ pub(super) fn wire(ui: &MainWindow, state: &Rc<RefCell<State>>) {
         let mut s = st.borrow_mut();
         s.files = files;
         s.overrides = overrides;
+        s.sel.clear();
         s.dirs = false;
         drop(s);
         ui.set_selected_row(-1);
@@ -294,12 +318,28 @@ pub(super) fn wire(ui: &MainWindow, state: &Rc<RefCell<State>>) {
     });
 
     on!(on_remove_selected, |ui, st| {
-        let i = ui.get_selected_row();
         let mut s = st.borrow_mut();
-        if i >= 0 && (i as usize) < s.files.len() {
-            let p = s.files.remove(i as usize);
+        let idx: Vec<usize> = if s.sel.is_empty() {
+            let i = ui.get_selected_row();
+            if i >= 0 && (i as usize) < s.files.len() {
+                vec![i as usize]
+            } else {
+                Vec::new()
+            }
+        } else {
+            // descending, so earlier removals don't shift later indices
+            s.sel
+                .iter()
+                .rev()
+                .copied()
+                .filter(|&k| k < s.files.len())
+                .collect()
+        };
+        for k in idx {
+            let p = s.files.remove(k);
             s.overrides.remove(&p);
         }
+        s.sel.clear();
         drop(s);
         ui.set_selected_row(-1);
         ui.set_override_text("".into());
@@ -319,6 +359,22 @@ pub(super) fn wire(ui: &MainWindow, state: &Rc<RefCell<State>>) {
             }
         };
         if moved {
+            let mut s = st.borrow_mut();
+            let (a, b) = (i as usize, j as usize);
+            let had_a = s.sel.remove(&a);
+            let had_b = s.sel.remove(&b);
+            if had_a {
+                s.sel.insert(b);
+            }
+            if had_b {
+                s.sel.insert(a);
+            }
+            if s.anchor == a {
+                s.anchor = b;
+            } else if s.anchor == b {
+                s.anchor = a;
+            }
+            drop(s);
             ui.set_selected_row(j);
             refresh(&ui, &st.borrow());
         }
@@ -348,6 +404,7 @@ pub(super) fn wire(ui: &MainWindow, state: &Rc<RefCell<State>>) {
         if ui.get_sort_desc() {
             s.files.reverse();
         }
+        s.sel.clear();
         drop(s);
         ui.set_selected_row(-1);
         refresh(&ui, &st.borrow());
@@ -497,15 +554,45 @@ pub(super) fn wire(ui: &MainWindow, state: &Rc<RefCell<State>>) {
         }
     });
 
-    on!(on_row_clicked, |ui, st, i: i32| {
-        if i < 0 {
+    on!(on_select_row, |ui, st, i: i32, ctrl: bool, shift: bool| {
+        let mut s = st.borrow_mut();
+        if i < 0 || (i as usize) >= s.files.len() {
+            s.sel.clear();
+            drop(s);
+            ui.set_selected_row(-1);
             ui.set_override_text("".into());
+            sync_selection(&ui, &st.borrow());
             return;
         }
+        let idx = i as usize;
+        if shift {
+            let a = s.anchor.min(s.files.len() - 1);
+            if !ctrl {
+                s.sel.clear();
+            }
+            for k in a.min(idx)..=a.max(idx) {
+                s.sel.insert(k);
+            }
+        } else if ctrl {
+            if !s.sel.remove(&idx) {
+                s.sel.insert(idx);
+            }
+            s.anchor = idx;
+        } else {
+            s.sel.clear();
+            s.sel.insert(idx);
+            s.anchor = idx;
+        }
+        drop(s);
+        ui.set_selected_row(i);
+        sync_selection(&ui, &st.borrow());
         let s = st.borrow();
-        let Some(f) = s.files.get(i as usize) else {
+        if s.sel.len() > 1 {
+            ui.set_override_text("".into());
+            ui.set_status_text(format!("{} of {} selected", s.sel.len(), s.files.len()).into());
             return;
-        };
+        }
+        let Some(f) = s.files.get(idx) else { return };
         let msg = match fs::metadata(f) {
             Ok(md) => format!(
                 "{} · {} bytes · created {} · modified {}",
@@ -522,6 +609,71 @@ pub(super) fn wire(ui: &MainWindow, state: &Rc<RefCell<State>>) {
         drop(s);
         ui.set_override_text(over.into());
         ui.set_status_text(msg.into());
+    });
+
+    on!(on_row_right, |ui, st, i: i32| {
+        let mut s = st.borrow_mut();
+        if i < 0 || (i as usize) >= s.files.len() {
+            return;
+        }
+        if !s.sel.contains(&(i as usize)) {
+            s.sel.clear();
+            s.sel.insert(i as usize);
+            s.anchor = i as usize;
+        }
+        let over = s
+            .files
+            .get(i as usize)
+            .and_then(|f| s.overrides.get(f))
+            .cloned()
+            .unwrap_or_default();
+        let single = s.sel.len() == 1;
+        drop(s);
+        ui.set_selected_row(i);
+        if single {
+            ui.set_override_text(over.into());
+        }
+        sync_selection(&ui, &st.borrow());
+    });
+
+    on!(on_reveal_file, |ui, st, i: i32| {
+        let _ = &ui;
+        let s = st.borrow();
+        let Some(p) = s.files.get(i as usize) else {
+            return;
+        };
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::process::CommandExt;
+            let _ = std::process::Command::new("explorer")
+                .raw_arg(format!("/select,\"{}\"", p.display()))
+                .spawn();
+        }
+        #[cfg(target_os = "macos")]
+        let _ = std::process::Command::new("open").arg("-R").arg(p).spawn();
+        #[cfg(all(unix, not(target_os = "macos")))]
+        let _ = std::process::Command::new("xdg-open")
+            .arg(p.parent().unwrap_or(Path::new(".")))
+            .spawn();
+    });
+
+    on!(on_keep_selected, |ui, st| {
+        let mut s = st.borrow_mut();
+        if s.sel.is_empty() {
+            return;
+        }
+        let keep: Vec<PathBuf> = s
+            .sel
+            .iter()
+            .filter_map(|&k| s.files.get(k).cloned())
+            .collect();
+        s.overrides.retain(|p, _| keep.contains(p));
+        s.files = keep;
+        s.sel.clear();
+        drop(s);
+        ui.set_selected_row(-1);
+        ui.set_override_text("".into());
+        refresh(&ui, &st.borrow());
     });
 
     on!(on_apply_batch, |ui, st| {

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.2 - 2026-07-19
+
+- Multi-select in the file list: Ctrl+click toggles rows, Shift+click selects a range, Shift+↑/↓ extends from the keyboard. Remove, the Delete key, and the context menu act on the whole selection.
+- Right-click context menu on file rows, themed to match the app. Single file: rename override, show in Explorer, remove. Multiple selected: remove selected, keep only selected, clear selection.
+
 ## 0.4.1 - 2026-07-19
 
 - Case-insensitive Replace and List Replace compile their matchers once instead of once per file (about 100× faster in the 100,000-operation benchmark).
