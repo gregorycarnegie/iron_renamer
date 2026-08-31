@@ -383,8 +383,11 @@ fn transfer(from: &Path, to: &Path, mode: Mode) -> io::Result<()> {
             "cannot copy or move a folder inside itself",
         ));
     }
+    // Same folder means the parent already exists; create_dir_all would spend
+    // a failed mkdir plus a metadata call per file proving that.
     if let Some(dir) = to.parent()
         && !dir.as_os_str().is_empty()
+        && from.parent() != Some(dir)
     {
         fs::create_dir_all(dir)?;
     }

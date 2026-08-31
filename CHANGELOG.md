@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.4 - 2026-08-31
+
+- Renaming a batch of files is about 23% faster (8.7s -> 6.8s for 20,000 files). Each rename within a folder was spending a failed directory-create plus a metadata call proving the folder it was already in exists; that is skipped now. The saving is largest on network shares, where those were two round trips per file.
+
 ## 0.4.3 - 2026-08-31
 
 - Updated dependencies: boa 0.22, lofty 0.25, nom-exif 3.7, clap 4.6.6, crc32fast 1.5.1.

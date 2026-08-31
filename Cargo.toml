@@ -1,6 +1,6 @@
 [package]
 name = "iron_renamer"
-version = "0.4.3"
+version = "0.4.4"
 edition = "2024"
 license = "MIT"
 
@@ -30,3 +30,7 @@ winresource = "0.1.31"
 proptest = "1.11.0"
 # Headless slint platform, so GUI callback wiring can be driven from tests.
 i-slint-backend-testing = "1.17.1"
+
+[profile.profiling]
+inherits = "release"
+debug = 1
