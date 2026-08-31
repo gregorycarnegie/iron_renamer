@@ -60,3 +60,46 @@ jobs:
       - run: gh release create "$GITHUB_REF_NAME" iron_renamer-* --generate-notes --verify-tag
         env:
           GH_TOKEN: ${{ github.token }}
+
+  microsoft-store:
+    if: vars.ENABLE_MICROSOFT_STORE_PUBLISH == 'true'
+    needs: build
+    runs-on: windows-latest
+    concurrency: microsoft-store-production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: windows-*
+          path: store-packages
+          merge-multiple: true
+      - name: Create Store upload
+        shell: pwsh
+        run: |
+          $packages = Get-ChildItem store-packages -Filter *.msix
+          if ($packages.Count -ne 2) { throw "Expected x64 and ARM64 MSIX packages; found $($packages.Count)" }
+          Compress-Archive $packages.FullName iron_renamer-store.zip
+          Move-Item iron_renamer-store.zip iron_renamer-store.msixupload
+      - uses: microsoft/microsoft-store-apppublisher@v1.4
+      - name: Configure Microsoft Store CLI
+        shell: pwsh
+        env:
+          TENANT_ID: ${{ secrets.PARTNER_CENTER_TENANT_ID }}
+          SELLER_ID: ${{ secrets.PARTNER_CENTER_SELLER_ID }}
+          CLIENT_ID: ${{ secrets.PARTNER_CENTER_CLIENT_ID }}
+          CLIENT_SECRET: ${{ secrets.PARTNER_CENTER_CLIENT_SECRET }}
+        run: |
+          msstore reconfigure `
+            --tenantId $env:TENANT_ID `
+            --sellerId $env:SELLER_ID `
+            --clientId $env:CLIENT_ID `
+            --clientSecret $env:CLIENT_SECRET
+      - name: Publish to Microsoft Store
+        shell: pwsh
+        env:
+          PRODUCT_ID: ${{ vars.PARTNER_CENTER_PRODUCT_ID }}
+        run: |
+          if (!$env:PRODUCT_ID) { throw "Set the PARTNER_CENTER_PRODUCT_ID repository variable" }
+          msstore publish . `
+            --inputFile iron_renamer-store.msixupload `
+            --appId $env:PRODUCT_ID

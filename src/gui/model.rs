@@ -306,4 +306,101 @@ mod tests {
         remove_rule(&mut state, 1);
         assert_eq!((state.rules.len(), state.editing), (1, None));
     }
+
+    // ── mutation-testing gap fills (2026-08-30 baseline) ──
+
+    #[test]
+    fn every_rule_kind_summarises_distinctly() {
+        // Each arm must produce its own shape; falling through to the default
+        // would just echo `a` for all of them.
+        assert_eq!(spec("replace", "x", "y").summary(), "\"x\" → \"y\"");
+        assert_eq!(spec("regex", "x", "y").summary(), "/x/ → \"y\"");
+        assert_eq!(spec("move", "x", "start").summary(), "\"x\" → start");
+        assert_eq!(spec("renumber", "2", "+10").summary(), "#2 +10");
+        assert_eq!(spec("swap", "-", "").summary(), "around \"-\"");
+        assert_eq!(spec("pairs", "a=b\nc=d", "").summary(), "2 pair(s)");
+        assert_eq!(spec("names", "a\nb\nc", "").summary(), "3 name(s)");
+        assert_eq!(spec("js", "one\ntwo", "").summary(), "script · 2 line(s)");
+
+        // Guarded arms: empty b falls back to a default, not to the raw value.
+        assert_eq!(spec("move", "x", "").summary(), "\"x\" → end");
+        assert_eq!(spec("insert", "x", "").summary(), "\"x\" @ end");
+        // "case" only gains the "@ part" half when b is set.
+        assert_eq!(spec("case", "upper", "").summary(), "upper");
+        assert_eq!(spec("case", "upper", "name").summary(), "upper @ name");
+        // "trim" names whitespace only when a is empty.
+        assert_eq!(spec("trim", "", "").summary(), "whitespace");
+        assert_eq!(spec("trim", "-_", "").summary(), "-_");
+
+        // Mods are appended whatever the kind.
+        let mut m = spec("swap", "-", "");
+        m.mods = "ci".into();
+        assert_eq!(m.summary(), "around \"-\" [ci]");
+    }
+
+    #[test]
+    fn removing_a_rule_keeps_the_edit_cursor_on_the_same_rule() {
+        let mut s = State {
+            rules: (0..4)
+                .map(|i| spec("replace", &i.to_string(), ""))
+                .collect(),
+            ..State::default()
+        };
+        // Removing the edited rule cancels the edit.
+        s.editing = Some(1);
+        remove_rule(&mut s, 1);
+        assert_eq!((s.rules.len(), s.editing), (3, None));
+
+        // Removing before it shifts the cursor down by exactly one.
+        s.editing = Some(2);
+        remove_rule(&mut s, 0);
+        assert_eq!(s.editing, Some(1));
+
+        // Removing after it leaves the cursor alone.
+        s.editing = Some(0);
+        remove_rule(&mut s, 1);
+        assert_eq!(s.editing, Some(0));
+
+        // Out of range is a no-op.
+        let before = s.rules.len();
+        remove_rule(&mut s, before);
+        assert_eq!(s.rules.len(), before);
+    }
+
+    #[test]
+    fn moving_a_rule_carries_the_edit_cursor_with_it() {
+        let mut s = State {
+            rules: (0..4)
+                .map(|i| spec("replace", &i.to_string(), ""))
+                .collect(),
+            ..State::default()
+        };
+        // The edited rule follows itself to the new slot.
+        s.editing = Some(0);
+        move_rule(&mut s, 0, 2);
+        assert_eq!(s.rules[2].a, "0");
+        assert_eq!(s.editing, Some(2));
+
+        // The rule swapped *into* the vacated slot takes the old index.
+        s.editing = Some(3);
+        move_rule(&mut s, 1, 3);
+        assert_eq!(s.editing, Some(1));
+
+        // An uninvolved cursor does not move.
+        s.editing = Some(0);
+        move_rule(&mut s, 1, 2);
+        assert_eq!(s.editing, Some(0));
+
+        // Out-of-range indices leave the order untouched. One past the end is
+        // the interesting case: an inclusive bound would swap out of bounds.
+        let n = s.rules.len();
+        let before: Vec<String> = s.rules.iter().map(|r| r.a.clone()).collect();
+        move_rule(&mut s, n, 0);
+        move_rule(&mut s, 0, n as isize);
+        move_rule(&mut s, 99, 0);
+        move_rule(&mut s, 0, -1);
+        move_rule(&mut s, 0, 99);
+        let after: Vec<String> = s.rules.iter().map(|r| r.a.clone()).collect();
+        assert_eq!(before, after);
+    }
 }

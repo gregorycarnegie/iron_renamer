@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.3 - 2026-08-31
+
+- Updated dependencies: boa 0.22, lofty 0.25, nom-exif 3.7, clap 4.6.6, crc32fast 1.5.1.
+- Tagged releases now also submit the Windows packages to the Microsoft Store.
+- Two latent bugs found by mutation testing and fixed by tests: `--sort date` had no test at all, and the per-folder listing cache that keeps network shares fast could have been deleted without a single test failing.
+- The test suite grew from 78 to 167 tests (surviving mutants down from 311 to 60 across Windows and Linux). GUI callbacks are now testable headlessly, and image, video and audio metadata are covered by generated fixtures.
+- Internal: the random helper is split into `xorshift64`/`seed_from` so its invariants can be asserted directly. Generated names are unchanged.
+
 ## 0.4.2 - 2026-07-19
 
 - Multi-select in the file list: Ctrl+click toggles rows, Shift+click selects a range, Shift+↑/↓ extends from the keyboard. Remove, the Delete key, and the context menu act on the whole selection.

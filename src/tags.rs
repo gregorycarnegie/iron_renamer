@@ -469,21 +469,35 @@ fn fmt_dt(fmt: &str, secs: i64) -> String {
     out
 }
 
-// xorshift64, seeded once per thread; random tags regenerate on every preview.
+/// One xorshift64 step (Marsaglia); 13/7/17 is the published shift triple.
+fn xorshift64(mut x: u64) -> u64 {
+    x ^= x << 13;
+    x ^= x >> 7;
+    x ^= x << 17;
+    x
+}
+
+/// Force a clock reading odd. xorshift64 maps 0 to 0, so a zero seed would
+/// return 0 for the rest of the thread's life; the low bit is the cheapest
+/// guarantee that never happens.
+fn seed_from(nanos: u64) -> u64 {
+    nanos | 1
+}
+
+// Seeded once per thread; random tags regenerate on every preview.
 fn rng() -> u64 {
     thread_local! { static STATE: Cell<u64> = const { Cell::new(0) }; }
     STATE.with(|st| {
         let mut x = st.get();
         if x == 0 {
-            x = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map(|d| d.as_nanos() as u64)
-                .unwrap_or(0x9E37_79B9)
-                | 1;
+            x = seed_from(
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map(|d| d.as_nanos() as u64)
+                    .unwrap_or(0x9E37_79B9),
+            );
         }
-        x ^= x << 13;
-        x ^= x >> 7;
-        x ^= x << 17;
+        x = xorshift64(x);
         st.set(x);
         x
     })
@@ -817,5 +831,304 @@ mod tests {
         let r: i64 = expand("<rand:5:5>", "data.bin", &c).parse().unwrap();
         assert_eq!(r, 5);
         assert_eq!(expand("<rands:6>", "data.bin", &c).len(), 6);
+    }
+
+    // -- mutation-testing gap fills (2026-08-30 baseline) --
+
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("iron_tagx_{}_{name}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn original_extension_and_absolute_path_tags() {
+        let path = Path::new("C:/photos/trip/img.jpg");
+        let c = ctx(path, "orig scan.tiff");
+        assert_eq!(expand("<oext>", "img.jpg", &c), "tiff");
+        // <path> is the whole parent folder, <parent> only its last component.
+        let full = expand("<path>", "img.jpg", &c);
+        assert!(full.ends_with("trip"), "{full}");
+        assert!(
+            full.len() > expand("<parent>", "img.jpg", &c).len(),
+            "{full}"
+        );
+    }
+
+    #[test]
+    fn size_units_shift_down_not_up() {
+        let dir = scratch("size");
+        let p = dir.join("blob.bin");
+        fs::write(&p, vec![0u8; 3000]).unwrap();
+        let c = ctx(&p, "blob.bin");
+        assert_eq!(expand("<size>", "blob.bin", &c), "3000");
+        // Each unit divides; a left shift would give a number far larger than
+        // the file, and a deleted arm would leave the tag literal.
+        assert_eq!(expand("<size:kb>", "blob.bin", &c), "2");
+        assert_eq!(expand("<size:mb>", "blob.bin", &c), "0");
+        assert_eq!(expand("<size:gb>", "blob.bin", &c), "0");
+        assert_eq!(expand("<size:tb>", "blob.bin", &c), "0");
+        assert_eq!(expand("<size:zz>", "blob.bin", &c), "<size:zz>");
+    }
+
+    #[test]
+    fn human_size_scales_and_stops_at_the_last_unit() {
+        assert_eq!(human_size(512), "512 B");
+        assert_eq!(human_size(1536), "1.5 KB");
+        assert_eq!(human_size(3 << 20), "3.0 MB");
+        assert_eq!(human_size(5 << 30), "5.0 GB");
+        // A petabyte must clamp at TB; running off the end of UNITS panics.
+        assert_eq!(human_size(1 << 50), "1024.0 TB");
+    }
+
+    #[test]
+    fn numeric_counters_reject_letter_starts() {
+        let path = Path::new("a.txt");
+        let c = ctx(path, "a.txt");
+        // Letters are only a valid START for <alpha>.
+        assert_eq!(expand("<num:abc>", "a.txt", &c), "<num:abc>");
+        assert_ne!(expand("<alpha:abc>", "a.txt", &c), "<alpha:abc>");
+    }
+
+    #[test]
+    fn alpha_clamps_values_below_one() {
+        assert_eq!(alpha(0), "a");
+        assert_eq!(alpha(-5), "a");
+        assert_eq!(alpha(1), "a");
+        assert_eq!(alpha(27), "aa");
+    }
+
+    #[test]
+    fn parse_offset_reads_every_unit_suffix() {
+        assert_eq!(parse_offset("+3d"), Some(3 * 86_400));
+        assert_eq!(parse_offset("-12h"), Some(-12 * 3600));
+        assert_eq!(parse_offset("90m"), Some(5400));
+        assert_eq!(parse_offset("45s"), Some(45));
+        assert_eq!(parse_offset("100"), Some(100));
+        assert_eq!(parse_offset("3x"), None);
+    }
+
+    #[test]
+    fn civil_utc_handles_the_era_boundary_leap_day() {
+        // 2000-02-29 sits on doe == 146096, the last day of a 400-year era,
+        // where the era-correction terms are the only thing keeping it right.
+        assert_eq!(civil_utc(951_782_400), (2000, 2, 29, 0, 0, 0));
+        assert_eq!(civil_utc(0), (1970, 1, 1, 0, 0, 0));
+        assert_eq!(civil_utc(951_868_799), (2000, 2, 29, 23, 59, 59));
+        assert_eq!(civil_utc(951_868_800), (2000, 3, 1, 0, 0, 0));
+
+        // 2100 is a century year that is NOT a leap year, and the day after
+        // its February is where the era-correction terms actually change the
+        // answer. The roundtrip proptest above stops at 2100-01-01, so without
+        // this the term is only checked when a random draw happens to land on
+        // one of the ~0.8% of days that discriminate.
+        assert_eq!(civil_utc(4_107_456_000), (2100, 2, 28, 0, 0, 0));
+        assert_eq!(civil_utc(4_107_542_400), (2100, 3, 1, 0, 0, 0));
+        assert_eq!(epoch_from_civil(2100, 3, 1, 0, 0, 0), 4_107_542_400);
+    }
+
+    #[test]
+    fn created_accessed_and_modified_are_separate_clocks() {
+        use crate::batch::{apply_touch, parse_touch};
+        let dir = scratch("times");
+        let p = dir.join("dated.txt");
+        fs::write(&p, "x").unwrap();
+        // Only modified moves; created and accessed stay at "now".
+        let spec = parse_touch("modified=2001-05-06 07:08").unwrap();
+        let (n, errs) = apply_touch(std::slice::from_ref(&p), &spec);
+        assert_eq!((n, errs.len()), (1, 0), "{errs:?}");
+
+        let c = ctx(&p, "dated.txt");
+        assert_eq!(
+            expand("<modified:yyyy-MM-dd>", "dated.txt", &c),
+            "2001-05-06"
+        );
+        // A positive offset moves forward, and by days.
+        assert_eq!(
+            expand("<modified:yyyy-MM-dd:+3d>", "dated.txt", &c),
+            "2001-05-09"
+        );
+        for tag in ["created", "accessed", "now"] {
+            let y = expand(&format!("<{tag}:yyyy>"), "dated.txt", &c);
+            assert_ne!(y, "2001", "<{tag}> fell through to <modified>");
+            assert!(y.starts_with("20") && y.len() == 4, "<{tag}> gave {y}");
+        }
+    }
+
+    #[test]
+    fn csv_columns_are_one_based_and_named() {
+        let rows = vec![
+            vec!["id".to_string(), "who".to_string()],
+            vec!["r1c1".to_string(), "alice".to_string()],
+            vec!["r2c1".to_string(), "bob".to_string()],
+            vec!["r3c1".to_string(), "carol".to_string()],
+        ];
+        let path = Path::new("a.txt");
+        let mut c = ctx(path, "a.txt");
+        c.csv = &rows;
+        c.index = 2;
+        // Numeric columns index the row at ctx.index directly.
+        assert_eq!(expand("<csv:1>", "a.txt", &c), "r2c1");
+        assert_eq!(expand("<csv:2>", "a.txt", &c), "bob");
+        // Column 0 is not a column; a 1-based index must never underflow.
+        assert_eq!(expand("<csv:0>", "a.txt", &c), "<csv:0>");
+        // Named columns skip the header row, so they land one row later.
+        assert_eq!(expand("<csv:who>", "a.txt", &c), "carol");
+        assert_eq!(expand("<csv:nope>", "a.txt", &c), "<csv:nope>");
+    }
+
+    #[test]
+    fn rand_spans_its_whole_range_and_rejects_inverted_ones() {
+        let path = Path::new("a.txt");
+        let c = ctx(path, "a.txt");
+        assert_eq!(expand("<rand:9:2>", "a.txt", &c), "<rand:9:2>");
+        let mut seen_high = false;
+        for _ in 0..200 {
+            let v: i64 = expand("<rand:100:109>", "a.txt", &c).parse().unwrap();
+            assert!((100..=109).contains(&v), "out of range: {v}");
+            seen_high |= v > 101;
+        }
+        // A narrowed span (max/min instead of max-min) never reaches the top.
+        assert!(seen_high, "never drew above 101 in 200 tries");
+    }
+
+    #[test]
+    fn rands_is_not_a_constant_stream() {
+        let path = Path::new("a.txt");
+        let c = ctx(path, "a.txt");
+        let s = expand("<rands:32>", "a.txt", &c);
+        assert_eq!(s.len(), 32);
+        // A stuck or saturating generator repeats one character forever.
+        let distinct: std::collections::HashSet<char> = s.chars().collect();
+        assert!(
+            distinct.len() >= 5,
+            "only {} distinct in {s}",
+            distinct.len()
+        );
+    }
+
+    #[test]
+    fn arithmetic_and_case_mods() {
+        let path = Path::new("a.txt");
+        let c = ctx(path, "a.txt"); // num 7, pad 3 -> "007"
+        assert_eq!(expand("<name|lower>", "MiXeD.TXT", &c), "mixed");
+        assert_eq!(expand("<name|upper>", "MiXeD.TXT", &c), "MIXED");
+        // Width is preserved, and each operator is distinct at these values.
+        assert_eq!(expand("<num|+3>", "a.txt", &c), "010");
+        assert_eq!(expand("<num|-3>", "a.txt", &c), "004");
+        assert_eq!(expand("<num|*3>", "a.txt", &c), "021");
+        assert_eq!(expand("<num|/3>", "a.txt", &c), "002");
+        // An unknown mod is not an arithmetic one just because a number follows.
+        assert_eq!(expand("<num|q5>", "a.txt", &c), "<num|q5>");
+    }
+
+    #[test]
+    fn metadata_aliases_read_values_and_fall_back() {
+        let dir = scratch("meta");
+        let p = dir.join("tiny.png");
+        // Header-only PNG: imagesize reads IHDR without needing pixel data.
+        let mut png = b"\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR".to_vec();
+        png.extend_from_slice(&7u32.to_be_bytes()); // width
+        png.extend_from_slice(&3u32.to_be_bytes()); // height
+        png.extend_from_slice(&[8, 2, 0, 0, 0, 0, 0, 0, 0]);
+        fs::write(&p, &png).unwrap();
+        let c = ctx(&p, "tiny.png");
+        assert_eq!(expand("<width>x<height>", "tiny.png", &c), "7x3");
+
+        // Every other alias resolves to "" on a file that lacks it, so
+        // |fallback applies rather than the tag being left literal.
+        for tag in [
+            "datetaken",
+            "artist",
+            "album",
+            "track",
+            "title",
+            "duration",
+            "author",
+            "lat",
+            "lon",
+        ] {
+            let out = expand(&format!("<{tag}|fallback:none>"), "tiny.png", &c);
+            assert_eq!(out, "none", "<{tag}> did not resolve");
+        }
+    }
+
+    #[test]
+    fn datetime_extraction_validates_every_field() {
+        // A full stamp round-trips through the same civil-date maths.
+        let want = epoch_from_civil(2024, 5, 6, 7, 8, 9);
+        assert_eq!(extract_datetime("IMG_20240506_070809.jpg"), Some(want));
+        assert_eq!(extract_datetime("2024-05-06 07.08.09"), Some(want));
+        // Date only defaults the clock to midnight.
+        assert_eq!(
+            extract_datetime("scan_20240506.pdf"),
+            Some(epoch_from_civil(2024, 5, 6, 0, 0, 0))
+        );
+
+        // Every bound is inclusive on the low side and exclusive above it.
+        assert!(
+            extract_datetime("20241231_235959.jpg").is_some(),
+            "last legal"
+        );
+        assert!(
+            extract_datetime("20240101_000000.jpg").is_some(),
+            "first legal"
+        );
+        for bad in [
+            "20241301_000000.jpg", // month 13
+            "20240132_000000.jpg", // day 32
+            "20240506_240000.jpg", // hour 24
+            "20240506_006000.jpg", // minute 60
+            "20240506_000060.jpg", // second 60
+            "18991231_000000.jpg", // year below 1900
+            "30000101_000000.jpg", // year above 2999
+        ] {
+            assert_eq!(extract_datetime(bad), None, "{bad} should be rejected");
+        }
+        assert_eq!(extract_datetime("no digits here"), None);
+    }
+
+    #[test]
+    fn dt_string_formats_a_filesystem_time() {
+        let t = std::time::UNIX_EPOCH + std::time::Duration::from_secs(989_132_889);
+        assert_eq!(dt_string(t), "2001-05-06 07:08");
+        assert_eq!(dt_string(std::time::UNIX_EPOCH), "1970-01-01 00:00");
+    }
+
+    #[test]
+    fn the_random_seed_is_never_zero() {
+        // A zero seed freezes the generator for the whole thread, so every
+        // clock reading has to come out non-zero -- even ones included.
+        for nanos in [0, 1, 2, 3, 1024, u64::MAX - 1, u64::MAX] {
+            assert_ne!(seed_from(nanos), 0, "seed from {nanos}");
+        }
+        // Odd readings pass through untouched; even ones gain the low bit and
+        // nothing else, so no entropy above bit 0 is disturbed.
+        assert_eq!(seed_from(0), 1);
+        assert_eq!(seed_from(2), 3);
+        assert_eq!(seed_from(7), 7);
+        assert_eq!(seed_from(8), 9);
+    }
+
+    #[test]
+    fn xorshift64_reproduces_the_published_sequence() {
+        // Known-answer test for Marsaglia's xorshift64 with the 13/7/17
+        // triple, from a seed of 1. Pins the shifts and the xors without
+        // freezing anything this crate chose.
+        let mut x = 1u64;
+        let seq: Vec<u64> = (0..3)
+            .map(|_| {
+                x = xorshift64(x);
+                x
+            })
+            .collect();
+        assert_eq!(
+            seq,
+            [0x4082_2041, 0x1000_4106_0C01_1441, 0x9B1E_842F_6E86_2629]
+        );
+        // Zero is the one state the generator cannot leave -- the reason
+        // seed_from exists at all.
+        assert_eq!(xorshift64(0), 0);
     }
 }

@@ -224,4 +224,28 @@ mod tests {
         assert_eq!(csv_field("q\"t"), "\"q\"\"t\"");
         assert_eq!(json_str("a\"b\\c"), r#""a\"b\\c""#);
     }
+
+    // ── mutation-testing gap fills (2026-08-30 baseline) ──
+
+    #[test]
+    fn the_preset_folder_is_a_real_location_under_the_data_dir() {
+        let d = data_dir();
+        assert!(d.as_os_str().len() > 1, "data_dir collapsed to {d:?}");
+        assert!(d.file_name().is_some(), "{d:?}");
+        // dir() is data_dir()/presets, not a bare or empty path.
+        let p = dir();
+        assert!(p.starts_with(&d), "{p:?} not under {d:?}");
+        assert_eq!(p.file_name().unwrap(), "presets");
+    }
+
+    #[test]
+    fn json_escapes_control_characters_but_not_printable_ones() {
+        // 0x20 (space) is the first printable character and must survive.
+        assert_eq!(json_str("a b"), "\"a b\"");
+        assert_eq!(json_str("tab\there"), "\"tab\\there\"");
+        assert_eq!(json_str("nl\nhere"), "\"nl\\nhere\"");
+        assert_eq!(json_str("q\"s\\"), "\"q\\\"s\\\\\"");
+        // 0x1f is the last control character and must be escaped.
+        assert_eq!(json_str("\u{1f}"), "\"\\u001f\"");
+    }
 }

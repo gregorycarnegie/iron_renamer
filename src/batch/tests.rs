@@ -574,3 +574,362 @@ fn failed_undo_entries_stay_in_history() {
     assert_eq!(read(&a), "A");
     assert!(history_at(&hist).is_empty());
 }
+
+// ── mutation-testing gap fills (2026-08-30 baseline) ──
+
+#[test]
+fn counters_advance_per_item_and_per_folder() {
+    let d = tmpdir("counters");
+    let (one, two) = (d.join("one"), d.join("two"));
+    fs::create_dir_all(&one).unwrap();
+    fs::create_dir_all(&two).unwrap();
+    let files = vec![
+        put(&one, "a.txt", ""),
+        put(&one, "b.txt", ""),
+        put(&two, "c.txt", ""),
+    ];
+    let none = HashMap::new();
+    // start 5, so the batch counter is start + i and not start * i or i alone.
+    let r = rules(&[("pattern", "<num>_<dirnum>.<ext>", "")]);
+    let items = plan(&files, &BatchCfg::rename(&r, 5, 1, &none));
+    let names: Vec<&str> = items.iter().map(|i| i.new_name.as_str()).collect();
+    // <dirnum> restarts in each folder; <num> never does.
+    assert_eq!(names, ["5_1.txt", "6_2.txt", "7_1.txt"]);
+}
+
+#[test]
+fn copy_mode_treats_a_case_only_target_as_a_collision() {
+    let d = tmpdir("caseonly");
+    let files = vec![put(&d, "photo.jpg", "x")];
+    let none = HashMap::new();
+    let r = rules(&[("case", "upper", "")]);
+
+    // Renaming photo.jpg -> PHOTO.JPG is a legal case-only rename.
+    let items = plan(&files, &BatchCfg::rename(&r, 1, 1, &none));
+    assert_eq!(items[0].new_name, "PHOTO.JPG");
+    assert!(items[0].issue.is_none(), "{:?}", items[0].issue);
+
+    // Copying onto itself is not: the source file is still there.
+    let cfg = BatchCfg {
+        mode: Mode::Copy,
+        ..BatchCfg::rename(&r, 1, 1, &none)
+    };
+    let items = plan(&files, &cfg);
+    assert_eq!(items[0].issue.as_deref(), Some("target exists"));
+}
+
+#[test]
+fn a_collision_pattern_that_repeats_is_rejected() {
+    let d = tmpdir("collidepat");
+    put(&d, "same.jpg", "");
+    let files = vec![put(&d, "a.jpg", ""), put(&d, "b.jpg", "")];
+    let none = HashMap::new();
+    let r = rules(&[("pattern", "same.<ext>", "")]);
+
+    // The pattern is a stem suffix. A constant one cannot resolve a second
+    // collision, so the planner must give up rather than loop or overwrite.
+    let cfg = BatchCfg {
+        collision: Collision::Pattern("_dup".into()),
+        ..BatchCfg::rename(&r, 1, 1, &none)
+    };
+    let items = plan(&files, &cfg);
+    assert_eq!(items[0].new_name, "same_dup.jpg");
+    assert!(items[0].issue.is_none());
+    assert_eq!(
+        items[1].issue.as_deref(),
+        Some("collision pattern is not unique")
+    );
+
+    // A suffix that does vary resolves both.
+    let cfg = BatchCfg {
+        collision: Collision::Pattern("_<index>".into()),
+        ..BatchCfg::rename(&r, 1, 1, &none)
+    };
+    let items = plan(&files, &cfg);
+    assert!(items.iter().all(|i| i.issue.is_none()));
+    assert_eq!(items[0].new_name, "same_1.jpg");
+    assert_eq!(items[1].new_name, "same_2.jpg");
+
+    // The counter inside a collision suffix is start + i, like <num> anywhere
+    // else: from 5 over two files that is 5 and 6.
+    let cfg = BatchCfg {
+        collision: Collision::Pattern("_<num>".into()),
+        ..BatchCfg::rename(&r, 5, 1, &none)
+    };
+    let items = plan(&files, &cfg);
+    assert!(items.iter().all(|i| i.issue.is_none()));
+    assert_eq!(items[0].new_name, "same_5.jpg");
+    assert_eq!(items[1].new_name, "same_6.jpg");
+}
+
+#[test]
+fn an_over_long_target_path_is_refused() {
+    let d = tmpdir("toolong");
+    let files = vec![put(&d, "a.txt", "")];
+    let none = HashMap::new();
+    let long = "x".repeat(MAX_WINDOWS_PATH_LEN);
+    let r = rules(&[("pattern", &format!("{long}.<ext>"), "")]);
+    let items = plan(&files, &BatchCfg::rename(&r, 1, 1, &none));
+    assert_eq!(items[0].issue.as_deref(), Some("path too long"));
+
+    // A short one is fine, so the check is a length test and not a constant.
+    let r = rules(&[("pattern", "short.<ext>", "")]);
+    let items = plan(&files, &BatchCfg::rename(&r, 1, 1, &none));
+    assert!(items[0].issue.is_none());
+}
+
+#[test]
+fn finals_report_targets_for_successes_and_sources_otherwise() {
+    let d = tmpdir("finals");
+    let files = vec![put(&d, "a.txt", "a"), put(&d, "b.txt", "b")];
+    let none = HashMap::new();
+    // Only a.txt changes; b.txt keeps its name.
+    let r = rules(&[("replace", "a.txt", "renamed.txt")]);
+    let items = plan(&files, &BatchCfg::rename(&r, 1, 1, &none));
+    let ops: Vec<Op> = items
+        .iter()
+        .filter(|i| i.changed && i.issue.is_none())
+        .map(|i| Op {
+            from: i.from.clone(),
+            to: i.target.clone(),
+        })
+        .collect();
+    assert_eq!(ops.len(), 1);
+    let res = execute(ops, Mode::Rename);
+    assert!(res.failed.is_empty(), "{:?}", res.failed);
+
+    let out = finals(&items, &res);
+    // One entry per planned item, in order: the new path where it moved, the
+    // original where it did not.
+    assert_eq!(out, vec![d.join("renamed.txt"), d.join("b.txt")]);
+}
+
+#[test]
+fn a_folder_cannot_be_copied_or_moved_inside_itself() {
+    let d = tmpdir("selfnest");
+    let src = d.join("box");
+    fs::create_dir_all(&src).unwrap();
+    put(&src, "inner.txt", "x");
+    let nested = src.join("box-copy");
+
+    for mode in [Mode::Copy, Mode::Move] {
+        let err = transfer(&src, &nested, mode).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+    }
+    // Somewhere else entirely is fine.
+    let outside = d.join("elsewhere");
+    transfer(&src, &outside, Mode::Copy).unwrap();
+    assert_eq!(read(&outside.join("inner.txt")), "x");
+}
+
+#[test]
+fn execute_refuses_to_clobber_an_existing_target() {
+    let d = tmpdir("clobber");
+    let a = put(&d, "a.txt", "keep me");
+    let b = put(&d, "b.txt", "victim");
+    let res = execute(
+        vec![Op {
+            from: a.clone(),
+            to: b.clone(),
+        }],
+        Mode::Rename,
+    );
+    assert!(res.renamed.is_empty());
+    assert_eq!(res.failed.len(), 1);
+    // Both files still hold what they held.
+    assert_eq!(read(&a), "keep me");
+    assert_eq!(read(&b), "victim");
+}
+
+#[test]
+fn two_independent_cycles_resolve_in_one_batch() {
+    // Each cycle needs its own file moved aside, so the temp names must not
+    // collide with one another or with anything already on disk.
+    let d = tmpdir("twocycles");
+    let (a, b) = (put(&d, "a.txt", "A"), put(&d, "b.txt", "B"));
+    let (c, e) = (put(&d, "c.txt", "C"), put(&d, "e.txt", "E"));
+    let res = execute(
+        vec![
+            Op {
+                from: a.clone(),
+                to: b.clone(),
+            },
+            Op {
+                from: b.clone(),
+                to: a.clone(),
+            },
+            Op {
+                from: c.clone(),
+                to: e.clone(),
+            },
+            Op {
+                from: e.clone(),
+                to: c.clone(),
+            },
+        ],
+        Mode::Rename,
+    );
+    assert!(res.failed.is_empty(), "{:?}", res.failed);
+    assert_eq!(res.renamed.len(), 4);
+    assert_eq!((read(&a), read(&b)), ("B".to_string(), "A".to_string()));
+    assert_eq!((read(&c), read(&e)), ("E".to_string(), "C".to_string()));
+    assert_eq!(
+        fs::read_dir(&d).unwrap().count(),
+        4,
+        "temp files left behind"
+    );
+}
+
+#[test]
+fn a_three_way_cycle_rotates_every_file() {
+    let d = tmpdir("threecycle");
+    let (a, b, c) = (
+        put(&d, "a.txt", "A"),
+        put(&d, "b.txt", "B"),
+        put(&d, "c.txt", "C"),
+    );
+    let res = execute(
+        vec![
+            Op {
+                from: a.clone(),
+                to: b.clone(),
+            },
+            Op {
+                from: b.clone(),
+                to: c.clone(),
+            },
+            Op {
+                from: c.clone(),
+                to: a.clone(),
+            },
+        ],
+        Mode::Rename,
+    );
+    assert!(res.failed.is_empty(), "{:?}", res.failed);
+    assert_eq!(res.renamed.len(), 3);
+    assert_eq!(read(&a), "C");
+    assert_eq!(read(&b), "A");
+    assert_eq!(read(&c), "B");
+    assert_eq!(
+        fs::read_dir(&d).unwrap().count(),
+        3,
+        "temp files left behind"
+    );
+}
+
+#[test]
+fn a_source_used_twice_only_frees_its_name_once() {
+    // Two ops read the same file and a third wants to take its name. The
+    // name must not be handed over until *both* readers are done with it,
+    // or the third op overwrites a file the second still needs.
+    let d = tmpdir("dupsource");
+    let a = put(&d, "a.txt", "A");
+    let (b, c) = (d.join("b.txt"), d.join("c.txt"));
+    let e = put(&d, "e.txt", "E");
+
+    let res = execute(
+        vec![
+            Op {
+                from: a.clone(),
+                to: b.clone(),
+            },
+            Op {
+                from: a.clone(),
+                to: c.clone(),
+            },
+            Op {
+                from: e.clone(),
+                to: a.clone(),
+            },
+        ],
+        Mode::Rename,
+    );
+    // a.txt can only move once, so exactly one of the first two ops succeeds
+    // and the other reports a missing source; e.txt then takes the name.
+    assert_eq!(res.renamed.len(), 2, "{:?}", res.failed);
+    assert_eq!(res.failed.len(), 1);
+    assert_eq!(read(&a), "E", "e.txt took the freed name");
+    let moved = if b.exists() { read(&b) } else { read(&c) };
+    assert_eq!(moved, "A");
+    assert!(b.exists() != c.exists(), "only one target should exist");
+    assert!(!e.exists());
+    assert_eq!(fs::read_dir(&d).unwrap().count(), 2);
+}
+
+#[test]
+fn export_results_writes_the_execution_log() {
+    let d = tmpdir("exportres");
+    let a = put(&d, "a.txt", "A");
+    let b = d.join("b.txt");
+    let res = execute(
+        vec![Op {
+            from: a.clone(),
+            to: b.clone(),
+        }],
+        Mode::Rename,
+    );
+    assert_eq!(res.renamed.len(), 1);
+
+    let out = d.join("log.csv");
+    export_results(&res, &out).unwrap();
+    let text = fs::read_to_string(&out).unwrap();
+    assert!(text.contains("a.txt"), "{text}");
+    assert!(text.contains("b.txt"), "{text}");
+    assert!(text.lines().count() >= 2, "header plus a row: {text}");
+}
+
+#[test]
+fn renumber_handles_a_digit_run_at_the_very_end() {
+    // The digit scan must stop at the last byte; walking one past it panics.
+    let d = tmpdir("renum");
+    let none = HashMap::new();
+    let r = rules(&[("renumber", "1", "+10")]);
+
+    let items = plan(
+        &[put(&d, "shot7.txt", "")],
+        &BatchCfg::rename(&r, 1, 1, &none),
+    );
+    assert_eq!(items[0].new_name, "shot17.txt");
+
+    // A name that is nothing but digits is the same edge from the other side.
+    let items = plan(&[put(&d, "42", "")], &BatchCfg::rename(&r, 1, 1, &none));
+    assert_eq!(items[0].new_name, "52");
+}
+
+#[test]
+fn touch_from_exif_falls_back_when_the_first_tag_is_absent() {
+    // A file carrying CreateDate but no DateTimeOriginal. The first lookup
+    // yields Some("") -- present but empty -- which must be treated as absent
+    // so the fallback runs, not fed to the date parser.
+    let d = tmpdir("touchexif");
+    let p = d.join("shot.jpg");
+    fs::write(&p, include_bytes!("../../tests/fixtures/1x1.jpg")).unwrap();
+    crate::meta::set(
+        std::slice::from_ref(&p),
+        &["createdate=2019:03:04 05:06:07".into()],
+    )
+    .unwrap();
+
+    let spec = parse_touch("modified=exif").unwrap();
+    let (done, errs) = apply_touch(std::slice::from_ref(&p), &spec);
+    assert_eq!((done, errs.len()), (1, 0), "{errs:?}");
+
+    let secs = fs::metadata(&p)
+        .unwrap()
+        .modified()
+        .unwrap()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    assert_eq!(crate::tags::civil_utc(secs).0, 2019, "took the CreateDate");
+
+    // A readable file with no date metadata is skipped silently, by design.
+    let plain = put(&d, "plain.txt", "");
+    assert_eq!(apply_touch(&[plain], &spec), (0, vec![]));
+
+    // An unreadable one is an error, so a typo in a path is not swallowed.
+    let (done, errs) = apply_touch(&[d.join("not_here.jpg")], &spec);
+    assert_eq!(done, 0);
+    assert_eq!(errs.len(), 1, "{errs:?}");
+    assert!(errs[0].contains("unreadable"), "{errs:?}");
+}

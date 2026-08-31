@@ -746,3 +746,129 @@ pub(super) fn wire(ui: &MainWindow, state: &Rc<RefCell<State>>) {
         ui.set_status_text(msg.into());
     });
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // mode_blocked guards the file-picking callbacks, which open a native
+    // dialog once they get past it, so it is exercised directly here rather
+    // than through invoke_pick_files.
+    fn ui() -> MainWindow {
+        i_slint_backend_testing::init_no_event_loop();
+        MainWindow::new().unwrap()
+    }
+
+    #[test]
+    fn mode_is_only_blocked_when_a_non_empty_list_disagrees() {
+        let ui = ui();
+        let mut s = State::default();
+
+        // An empty list accepts either kind.
+        assert!(!mode_blocked(&ui, &s, false));
+        assert!(!mode_blocked(&ui, &s, true));
+
+        // A list of files blocks adding folders, and says so.
+        s.files.push(PathBuf::from("/t/a.txt"));
+        s.dirs = false;
+        assert!(!mode_blocked(&ui, &s, false), "files accept more files");
+        assert!(mode_blocked(&ui, &s, true), "files must block folders");
+        assert!(
+            ui.get_status_text()
+                .contains("Clear it before adding folders")
+        );
+
+        // ...and the mirror case.
+        s.dirs = true;
+        assert!(!mode_blocked(&ui, &s, true), "folders accept more folders");
+        assert!(mode_blocked(&ui, &s, false), "folders must block files");
+        assert!(
+            ui.get_status_text()
+                .contains("Clear it before adding files")
+        );
+    }
+
+    #[test]
+    fn selection_flags_follow_the_state_without_recomputing_rows() {
+        let ui = ui();
+        let state = Rc::new(RefCell::new(State::default()));
+        state.borrow_mut().files = (0..4)
+            .map(|i| PathBuf::from(format!("/t/f{i}.txt")))
+            .collect();
+        refresh(&ui, &state.borrow());
+        assert_eq!(ui.get_selection_count(), 0);
+
+        {
+            let mut s = state.borrow_mut();
+            s.sel.insert(1);
+            s.sel.insert(3);
+        }
+        sync_selection(&ui, &state.borrow());
+        let flags: Vec<bool> = ui.get_files().iter().map(|r| r.selected).collect();
+        assert_eq!(flags, [false, true, false, true]);
+        assert_eq!(ui.get_selection_count(), 2);
+
+        // Clearing flips them back rather than leaving them stuck on.
+        state.borrow_mut().sel.clear();
+        sync_selection(&ui, &state.borrow());
+        let flags: Vec<bool> = ui.get_files().iter().map(|r| r.selected).collect();
+        assert_eq!(flags, [false; 4]);
+        assert_eq!(ui.get_selection_count(), 0);
+    }
+
+    #[test]
+    fn applying_a_preset_loads_rules_settings_and_clears_the_edit_cursor() {
+        let ui = ui();
+        let state = Rc::new(RefCell::new(State::default()));
+        state.borrow_mut().files.push(PathBuf::from("/t/a.txt"));
+        // Something is mid-edit when the preset arrives.
+        state.borrow_mut().editing = Some(0);
+        ui.set_editing_rule(0);
+
+        let dir = std::env::temp_dir().join(format!("iron_cb_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("good.preset");
+        std::fs::write(
+            &p,
+            "rule\tpattern\t\tpic_<num>.<ext>\t\nset\tstart\t5\nset\tcollide\tnumber\n",
+        )
+        .unwrap();
+        apply_preset(&ui, &state, &p);
+
+        assert_eq!(state.borrow().rules.len(), 1);
+        assert_eq!(ui.get_start_text(), "5");
+        assert_eq!(ui.get_collide(), "number");
+        // Defaults fill in for settings the preset does not carry.
+        assert_eq!(ui.get_batch_mode(), "rename");
+        // The edit cursor is cancelled, not moved to row 1.
+        assert_eq!(ui.get_editing_rule(), -1);
+        assert_eq!(state.borrow().editing, None);
+        // All rules were valid, so the status must not claim otherwise.
+        assert!(ui.get_status_text().contains("loaded 1 rule(s)"));
+        assert!(
+            !ui.get_status_text().contains("invalid"),
+            "{}",
+            ui.get_status_text()
+        );
+
+        // A preset with a broken rule reports the count that failed.
+        let bad = dir.join("bad.preset");
+        std::fs::write(&bad, "rule\tregex\t[unclosed\tx\t\n").unwrap();
+        apply_preset(&ui, &state, &bad);
+        assert!(
+            ui.get_status_text().contains("invalid"),
+            "{}",
+            ui.get_status_text()
+        );
+
+        // A file that is not a preset at all reports the load error.
+        let missing = dir.join("nope.preset");
+        let _ = std::fs::remove_file(&missing);
+        apply_preset(&ui, &state, &missing);
+        assert!(
+            !ui.get_status_text().contains("loaded"),
+            "{}",
+            ui.get_status_text()
+        );
+    }
+}

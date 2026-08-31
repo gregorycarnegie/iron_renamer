@@ -142,6 +142,25 @@ cargo build --release        # -> target/release/iron_renamer(.exe)
 cargo test
 ```
 
+### Microsoft Store releases
+
+Pushing a `v*` tag builds x64 and ARM64 MSIX packages. Store submission is
+disabled by default; enable it by setting the `ENABLE_MICROSOFT_STORE_PUBLISH`
+repository variable to `true` and configuring these repository secrets:
+
+- `PARTNER_CENTER_TENANT_ID`
+- `PARTNER_CENTER_SELLER_ID`
+- `PARTNER_CENTER_CLIENT_ID`
+- `PARTNER_CENTER_CLIENT_SECRET`
+
+Also configure the `PARTNER_CENTER_PRODUCT_ID` repository variable with the
+app's Store ID (for example, `9N...`). The client is a Microsoft Entra app added
+under Partner Center **Account settings → User management → Microsoft Entra
+applications**. The first complete app submission must already exist in Partner
+Center; subsequent tagged releases are submitted for certification automatically.
+Microsoft currently limits Store CLI app updates to free products, so leave the
+enable variable unset for paid products.
+
 ## Layout
 
 | Path             | What                                        |

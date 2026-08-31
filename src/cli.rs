@@ -877,4 +877,87 @@ mod tests {
             ] if name == "mine" && values == &["ext:eq", "jpg"]
         ));
     }
+
+    // ── mutation-testing gap fills (2026-08-30 baseline) ──
+
+    // Every rule flag, in both spellings, with the id it normalises to and the
+    // rule kind it ends up as. A missing arm here means that flag's suffix
+    // mods are silently dropped, which is invisible until a rule misbehaves.
+    const RULE_FLAGS: &[(&str, &str, &str, &str)] = &[
+        // short, long, id, kind
+        ("-r", "--replace", "replace", "replace"),
+        ("-e", "--regex", "regex", "regex"),
+        ("-c", "--case", "case_rule", "case"),
+        ("-p", "--pattern", "pattern", "pattern"),
+        ("-i", "--insert", "insert", "insert"),
+        ("", "--remove", "remove", "remove"),
+        ("-t", "--trim", "trim", "trim"),
+        ("", "--renumber", "renumber", "renumber"),
+        ("", "--move", "move_rule", "move"),
+        ("", "--swap", "swap", "swap"),
+        ("", "--names", "names", "names"),
+        ("", "--replace-list", "replace_list", "pairs"),
+        ("", "--js", "js", "js"),
+    ];
+
+    #[test]
+    fn every_rule_flag_maps_to_its_id_in_both_spellings() {
+        for (short, long, id, _) in RULE_FLAGS {
+            assert_eq!(rule_id(long), Some(*id), "{long}");
+            if !short.is_empty() {
+                assert_eq!(rule_id(short), Some(*id), "{short}");
+            }
+        }
+        // Non-rule flags and bare words must not claim an id.
+        for other in [
+            "--sort", "--start", "--in", "-x", "--touch", "file.txt", "-",
+        ] {
+            assert_eq!(rule_id(other), None, "{other}");
+        }
+    }
+
+    #[test]
+    fn every_rule_flag_carries_its_suffix_mods_through_to_its_event() {
+        for (short, long, id, kind) in RULE_FLAGS {
+            for flag in [short, long] {
+                if flag.is_empty() {
+                    continue;
+                }
+                // Two values covers the widest arity; extras become files.
+                let args = [&format!("{flag}:name"), "aaa", "bbb"].map(str::to_string);
+                let (normalized, mods) = normalize_rule_flags(&args);
+                assert_eq!(normalized[1], **flag, "{flag} lost its suffix");
+                assert_eq!(mods[*id], vec![vec!["name".to_string()]], "{flag}");
+
+                let matches = Cli::command().try_get_matches_from(normalized).unwrap();
+                let cli = Cli::from_arg_matches(&matches).unwrap();
+                let events = rule_events(&cli, &matches, &mods);
+                let found = events.iter().find_map(|e| match e {
+                    RuleEvent::Rule { kind, mods, .. } => Some((*kind, mods.clone())),
+                    _ => None,
+                });
+                assert_eq!(
+                    found,
+                    Some((*kind, vec!["name".to_string()])),
+                    "{flag} produced the wrong event"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn empty_suffix_segments_are_dropped_not_kept() {
+        // "-r::ci:" has empty parts around the real one; they must not become
+        // modifiers, or rule building sees a mod it cannot parse.
+        let args = ["-r::ci:", "a", "b"].map(str::to_string);
+        let (normalized, mods) = normalize_rule_flags(&args);
+        assert_eq!(normalized[1], "-r");
+        assert_eq!(mods["replace"], vec![vec!["ci".to_string()]]);
+
+        // A flag with no suffix at all still records an (empty) occurrence, so
+        // later occurrences keep their own index.
+        let args = ["-r", "a", "b"].map(str::to_string);
+        let (_, mods) = normalize_rule_flags(&args);
+        assert_eq!(mods["replace"], vec![Vec::<String>::new()]);
+    }
 }

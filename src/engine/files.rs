@@ -251,3 +251,224 @@ pub fn name_of(p: &Path) -> String {
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default()
 }
+
+// These live here rather than in engine/tests.rs because the warming tests
+// assert on FsKinds::map, which is private to this module. Warming is a pure
+// performance optimisation -- deleting it leaves every result correct and
+// merely restores the per-file round trips that 0.3.3/0.3.4 removed -- so the
+// only thing that can catch a regression is asserting the cache is populated.
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tmpdir(name: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("iron_files_{}_{name}", std::process::id()));
+        let _ = fs::remove_dir_all(&d);
+        fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn warming_lists_each_folder_once_up_front() {
+        let root = tmpdir("warm");
+        let (one, two) = (root.join("one"), root.join("two"));
+        fs::create_dir_all(&one).unwrap();
+        fs::create_dir_all(&two).unwrap();
+        fs::write(one.join("a.txt"), "").unwrap();
+        fs::write(two.join("b.txt"), "").unwrap();
+        fs::create_dir(two.join("nested")).unwrap();
+
+        let paths = vec![one.join("a.txt"), one.join("gone.txt"), two.join("b.txt")];
+        let mut k = FsKinds::new();
+        k.warm_parents(&paths);
+
+        // Both parents cached after warming, before any per-path lookup.
+        assert_eq!(
+            k.map.len(),
+            2,
+            "cached: {:?}",
+            k.map.keys().collect::<Vec<_>>()
+        );
+        assert_eq!(k.map[&one].len(), 1);
+        assert!(!k.map[&two]["b.txt"]);
+        assert!(k.map[&two]["nested"]);
+
+        // Warming again must not re-list a folder that is already cached.
+        k.warm(vec![one.clone(), two.clone()]);
+        assert_eq!(k.map.len(), 2);
+
+        // Entries are matched case-insensitively, like NTFS.
+        assert_eq!(k.kind(&one.join("A.TXT")), Some(false));
+        assert_eq!(k.kind(&two.join("NESTED")), Some(true));
+        assert!(k.exists(&two.join("B.txt")));
+        assert!(!k.exists(&one.join("gone.txt")));
+    }
+
+    #[test]
+    fn warming_skips_paths_with_no_real_parent() {
+        let mut k = FsKinds::new();
+        // A bare name's parent is "", which is not a folder to enumerate.
+        k.warm_parents(&[PathBuf::from("bare.txt")]);
+        assert!(
+            k.map.is_empty(),
+            "cached: {:?}",
+            k.map.keys().collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn natural_key_splits_into_text_and_number_runs() {
+        // The exact shape matters: a stray empty chunk still sorts plausibly
+        // in most orderings, so only the structure catches it.
+        assert_eq!(natural_key("img10"), vec![("img".to_string(), 10)]);
+        assert_eq!(natural_key("a1b2"), vec![("a".into(), 1), ("b".into(), 2)]);
+        // No trailing digits sorts as 0, before any numbered sibling.
+        assert_eq!(natural_key("a"), vec![("a".to_string(), 0)]);
+        assert_eq!(natural_key("IMG"), vec![("img".to_string(), 0)]);
+    }
+
+    #[test]
+    fn sort_files_orders_by_modification_date() {
+        use crate::batch::{apply_touch, parse_touch};
+        let d = tmpdir("date");
+        for n in ["a.txt", "b.txt", "c.txt"] {
+            fs::write(d.join(n), "").unwrap();
+        }
+        // Dates deliberately disagree with name order, so a "date" sort that
+        // silently did nothing would leave the files in the wrong sequence.
+        for (n, when) in [
+            ("a.txt", "modified=2010-03-04 05:06"),
+            ("b.txt", "modified=2001-03-04 05:06"),
+            ("c.txt", "modified=2020-03-04 05:06"),
+        ] {
+            let spec = parse_touch(when).unwrap();
+            let (done, errs) = apply_touch(&[d.join(n)], &spec);
+            assert_eq!((done, errs.len()), (1, 0), "{errs:?}");
+        }
+
+        let orig = vec![d.join("a.txt"), d.join("b.txt"), d.join("c.txt")];
+        let mut f = orig.clone();
+        assert!(sort_files(&mut f, "date"));
+        assert_eq!(f, vec![d.join("b.txt"), d.join("a.txt"), d.join("c.txt")]);
+
+        // And the unknown-kind contract still holds alongside it.
+        let mut f = orig.clone();
+        assert!(!sort_files(&mut f, "manual"));
+        assert_eq!(f, orig);
+    }
+
+    #[test]
+    fn exists_answers_from_the_warmed_cache_not_a_fresh_stat() {
+        let d = tmpdir("cached");
+        let p = d.join("here.txt");
+        fs::write(&p, "").unwrap();
+        let mut k = FsKinds::new();
+        k.warm_parents(std::slice::from_ref(&p));
+        assert!(k.exists(&p));
+
+        // Deleting the file behind the cache must not change the answer: a
+        // per-call stat here is exactly the round trip warming exists to avoid.
+        fs::remove_file(&p).unwrap();
+        assert!(
+            k.exists(&p),
+            "exists() re-stat'ed instead of using the cache"
+        );
+        assert!(!p.exists());
+    }
+
+    // Windows refuses file symlinks without Developer Mode, but a directory
+    // junction needs no privilege and Rust reports it as a symlink, which is
+    // what the "is it a folder" branches actually test. A junction whose
+    // target is gone is the discriminating case: still a link, no longer a
+    // folder. WSL is not installed here; the file-symlink halves of these
+    // branches, and the #[cfg(unix)] code, need a Linux run.
+    #[cfg(windows)]
+    fn junction(link: &Path, target: &Path) -> bool {
+        std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(link)
+            .arg(target)
+            .output()
+            .is_ok_and(|o| o.status.success())
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn a_broken_directory_link_is_not_a_folder() {
+        let root = tmpdir("junction");
+        let real = root.join("real");
+        fs::create_dir_all(&real).unwrap();
+        fs::write(real.join("inner.txt"), "").unwrap();
+
+        let live = root.join("live");
+        let dead = root.join("dead");
+        let gone = root.join("gone");
+        fs::create_dir_all(&gone).unwrap();
+        if !junction(&live, &real) || !junction(&dead, &gone) {
+            return; // no junction support: nothing to assert
+        }
+        fs::remove_dir(&gone).unwrap(); // now `dead` points at nothing
+
+        // A live link resolves to a folder; a dangling one must not, or the
+        // planner would treat a broken reparse point as a directory.
+        let mut k = FsKinds::new();
+        k.warm(vec![root.clone()]);
+        assert_eq!(k.kind(&live), Some(true), "live junction is a folder");
+        assert_eq!(k.kind(&dead), Some(false), "dead junction is not a folder");
+
+        // Globbing for folders includes the live link and skips the dead one.
+        let pat = root.join("*").to_string_lossy().into_owned();
+        let mut dirs = expand(&pat, true);
+        dirs.sort();
+        assert_eq!(dirs, vec![live.clone(), real.clone()], "dead link matched");
+    }
+
+    // The other half of the same branches: Unix gives us symlinks to files and
+    // dangling links, which Windows junctions cannot express. Run under WSL.
+    #[test]
+    #[cfg(unix)]
+    fn symlinks_are_classified_by_what_they_point_at() {
+        use std::os::unix::fs::symlink;
+        let root = tmpdir("symlink");
+        let realdir = root.join("realdir");
+        fs::create_dir_all(&realdir).unwrap();
+        fs::write(realdir.join("inner.txt"), "").unwrap();
+        let realfile = root.join("real.txt");
+        fs::write(&realfile, "x").unwrap();
+
+        let to_dir = root.join("to_dir");
+        let to_file = root.join("to_file.txt");
+        let dangling = root.join("dangling.txt");
+        symlink(&realdir, &to_dir).unwrap();
+        symlink(&realfile, &to_file).unwrap();
+        symlink(root.join("never_existed"), &dangling).unwrap();
+
+        // Folder-ness follows the link, so a link to a file is not a folder
+        // and a link to nothing is not one either.
+        let mut k = FsKinds::new();
+        k.warm(vec![root.clone()]);
+        assert_eq!(k.kind(&to_dir), Some(true));
+        assert_eq!(k.kind(&to_file), Some(false));
+        assert_eq!(k.kind(&dangling), Some(false));
+
+        let pat = root.join("*").to_string_lossy().into_owned();
+
+        // Globbing for folders takes only what resolves to one.
+        let mut dirs = expand(&pat, true);
+        dirs.sort();
+        assert_eq!(dirs, vec![realdir.clone(), to_dir.clone()]);
+
+        // Globbing for files takes the link to a file but not the dangling one.
+        let mut files = expand(&pat, false);
+        files.sort();
+        assert_eq!(files, vec![realfile.clone(), to_file.clone()]);
+
+        // Collecting treats a link to a file as a file rather than descending
+        // into it, and leaves a dangling link out entirely.
+        let all = Masks::parse("");
+        let mut flat = Vec::new();
+        collect_dir(&root, false, &all, &mut flat);
+        flat.sort();
+        assert_eq!(flat, vec![realfile.clone(), to_file.clone()]);
+    }
+}

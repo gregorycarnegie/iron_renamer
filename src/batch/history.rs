@@ -257,4 +257,55 @@ mod tests {
         let path = PathBuf::from(OsString::from_vec(vec![b'a', 0xff, b'\t', b'b']));
         assert_eq!(decode_path(&encode_path(&path)), Some(path));
     }
+
+    // ── mutation-testing gap fills (2026-08-30 baseline) ──
+
+    #[test]
+    fn hex_round_trips_every_byte_and_rejects_bad_input() {
+        let all: Vec<u8> = (0..=255u8).collect();
+        let encoded = hex(&all);
+        assert_eq!(encoded.len(), 512);
+        assert!(encoded.starts_with("000102"), "{}", &encoded[..6]);
+        assert!(encoded.ends_with("fdfeff"));
+        assert_eq!(unhex(&encoded).unwrap(), all);
+
+        // Upper case is accepted, and the two nibbles must not be swapped.
+        assert_eq!(unhex("A5").unwrap(), vec![0xA5]);
+        assert_eq!(unhex("5a").unwrap(), vec![0x5a]);
+        assert_eq!(unhex("0F").unwrap(), vec![0x0F]);
+        assert_eq!(unhex("F0").unwrap(), vec![0xF0]);
+
+        assert_eq!(unhex("abc"), None, "odd length");
+        assert_eq!(unhex("zz"), None, "not hex");
+        assert_eq!(unhex("g0"), None, "just past 'f'");
+    }
+
+    #[test]
+    fn paths_round_trip_through_the_history_encoding() {
+        // Spaces, tabs and newlines must survive a line-oriented file.
+        for raw in [
+            "C:/plain/file.txt",
+            "C:/with space/and\ttab.txt",
+            "C:/new\nline.txt",
+            "C:/unicode/naïve — file.txt",
+        ] {
+            let p = PathBuf::from(raw);
+            let enc = encode_path(&p);
+            assert!(
+                !enc.contains(['\t', '\n', ' ']),
+                "encoding leaked whitespace: {enc}"
+            );
+            assert_eq!(decode_path(&enc).as_ref(), Some(&p), "round trip of {raw}");
+        }
+        assert_eq!(decode_path("nothex"), None);
+    }
+
+    #[test]
+    fn date_str_formats_the_batch_id_as_utc_minutes() {
+        // 2001-05-06 07:08:09 UTC, in milliseconds.
+        assert_eq!(date_str(989_132_889_000), "2001-05-06 07:08 UTC");
+        assert_eq!(date_str(0), "1970-01-01 00:00 UTC");
+        // Milliseconds are divided away, not multiplied or taken modulo.
+        assert_eq!(date_str(989_132_889_999), "2001-05-06 07:08 UTC");
+    }
 }
