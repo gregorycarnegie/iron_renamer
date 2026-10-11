@@ -1,5 +1,6 @@
 use super::*;
 use crate::engine::build_rule;
+use rstest::rstest;
 use std::time::UNIX_EPOCH;
 
 fn rules(specs: &[(&str, &str, &str)]) -> Vec<RuleEntry> {
@@ -101,32 +102,30 @@ fn bench_plan_preview() {
     let _ = fs::remove_dir_all(&d);
 }
 
-#[test]
-fn export_rows_formats_all_outputs() {
-    let d = tmpdir("export");
+#[rstest]
+#[case::csv("csv", "from,to\n\"a,b\",x\n")]
+#[case::json("json", "[\n  {\"from\": \"a,b\", \"to\": \"x\"}\n]\n")]
+#[case::text("txt", "a,b -> x\n")]
+fn export_rows_formats_all_outputs(#[case] ext: &str, #[case] expected: &str) {
+    let d = tmpdir(&format!("export_{ext}"));
     let rows = vec![(vec!["a,b".into(), "x".into()], "a,b -> x".into())];
-    for (ext, expected) in [
-        ("csv", "from,to\n\"a,b\",x\n"),
-        ("json", "[\n  {\"from\": \"a,b\", \"to\": \"x\"}\n]\n"),
-        ("txt", "a,b -> x\n"),
-    ] {
-        let path = d.join(format!("out.{ext}"));
-        export_rows(&path, &["from", "to"], rows.clone()).unwrap();
-        assert_eq!(read(&path), expected);
-    }
+    let path = d.join(format!("out.{ext}"));
+    export_rows(&path, &["from", "to"], rows).unwrap();
+    assert_eq!(read(&path), expected);
 }
 
-#[test]
-fn validates_names() {
-    assert!(name_issue("ok.txt").is_none());
-    assert!(name_issue("common.txt").is_none()); // COM without a digit is fine
-    assert!(name_issue("").is_some());
-    assert!(name_issue("a<b.txt").is_some());
-    assert!(name_issue("a\tb.txt").is_some());
-    assert!(name_issue("CON.txt").is_some());
-    assert!(name_issue("com3").is_some());
-    assert!(name_issue("trailing.").is_some());
-    assert!(name_issue("trailing ").is_some());
+#[rstest]
+#[case::normal("ok.txt", false)]
+#[case::com_without_digit("common.txt", false)]
+#[case::empty("", true)]
+#[case::invalid_character("a<b.txt", true)]
+#[case::control_character("a\tb.txt", true)]
+#[case::reserved_name("CON.txt", true)]
+#[case::reserved_device("com3", true)]
+#[case::trailing_dot("trailing.", true)]
+#[case::trailing_space("trailing ", true)]
+fn validates_names(#[case] name: &str, #[case] invalid: bool) {
+    assert_eq!(name_issue(name).is_some(), invalid);
 }
 
 #[test]

@@ -1,6 +1,7 @@
 // Integration tests: drive the real binary end to end. LOCALAPPDATA/HOME
 // point at the test dir so batch history never touches the user's own.
 
+use rstest::rstest;
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -62,32 +63,20 @@ fn preview_apply_history_undo() {
     assert!(out.contains("no batch history"), "{out}");
 }
 
-#[test]
-fn errors_exit_nonzero() {
-    let d = tmpdir("errors");
+#[rstest]
+#[case::no_rules("no_rules", &["a.txt"], "no rules")]
+#[case::no_files("no_files", &["-c", "upper", "nothing*.xyz"], "no files matched")]
+#[case::conflict("conflict", &["-p", "same.txt", "a.txt", "b.txt", "-x"], "conflict")]
+#[case::empty_history("empty_history", &["undo"], "no batch history")]
+fn errors_exit_nonzero(#[case] label: &str, #[case] args: &[&str], #[case] expected: &str) {
+    let d = tmpdir(&format!("errors_{label}"));
     fs::write(d.join("a.txt"), "").unwrap();
     fs::write(d.join("b.txt"), "").unwrap();
 
-    // No rules given.
-    let (_, err, ok) = run(&d, &["a.txt"]);
+    let (_, err, ok) = run(&d, args);
     assert!(!ok);
-    assert!(err.contains("no rules"), "{err}");
-
-    // No files matched.
-    let (_, err, ok) = run(&d, &["-c", "upper", "nothing*.xyz"]);
-    assert!(!ok);
-    assert!(err.contains("no files matched"), "{err}");
-
-    // Applying with unresolved conflicts renames nothing.
-    let (_, err, ok) = run(&d, &["-p", "same.txt", "a.txt", "b.txt", "-x"]);
-    assert!(!ok);
-    assert!(err.contains("conflict"), "{err}");
+    assert!(err.contains(expected), "{err}");
     assert!(d.join("a.txt").exists() && d.join("b.txt").exists());
-
-    // Undo with nothing recorded.
-    let (_, err, ok) = run(&d, &["undo"]);
-    assert!(!ok);
-    assert!(err.contains("no batch history"), "{err}");
 }
 
 #[test]

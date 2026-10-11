@@ -287,6 +287,7 @@ fn set_audio(path: &Path, assigns: &[(String, &str)]) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rstest::rstest;
 
     fn tmp(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("iron_meta_{}", std::process::id()));
@@ -344,11 +345,12 @@ mod tests {
         assert_eq!(get(&p, "artist").as_deref(), Some(""));
     }
 
-    #[test]
-    fn formats_duration() {
-        assert_eq!(fmt_duration(0), "0:00:00");
-        assert_eq!(fmt_duration(205), "0:03:25");
-        assert_eq!(fmt_duration(3661), "1:01:01");
+    #[rstest]
+    #[case::zero(0, "0:00:00")]
+    #[case::minutes(205, "0:03:25")]
+    #[case::hours(3661, "1:01:01")]
+    fn formats_duration(#[case] input: u64, #[case] expected: &str) {
+        assert_eq!(fmt_duration(input), expected);
     }
 
     // ── mutation-testing gap fills (2026-08-30 baseline) ──
@@ -498,15 +500,18 @@ mod tests {
         assert_eq!(get(Path::new("definitely_not_here.wav"), "artist"), None);
     }
 
-    #[test]
-    fn duration_formats_hours_minutes_and_seconds_separately() {
-        assert_eq!(fmt_duration(0), "0:00:00");
-        assert_eq!(fmt_duration(59), "0:00:59");
-        assert_eq!(fmt_duration(60), "0:01:00");
-        assert_eq!(fmt_duration(3599), "0:59:59");
-        assert_eq!(fmt_duration(3600), "1:00:00");
-        // Hours are not capped at 24 and minutes do not leak into hours.
-        assert_eq!(fmt_duration(93_784), "26:03:04");
+    #[rstest]
+    #[case::zero(0, "0:00:00")]
+    #[case::last_second(59, "0:00:59")]
+    #[case::minute_boundary(60, "0:01:00")]
+    #[case::last_minute(3599, "0:59:59")]
+    #[case::hour_boundary(3600, "1:00:00")]
+    #[case::more_than_a_day(93_784, "26:03:04")]
+    fn duration_formats_hours_minutes_and_seconds_separately(
+        #[case] input: u64,
+        #[case] expected: &str,
+    ) {
+        assert_eq!(fmt_duration(input), expected);
     }
 
     // A real 1x1 JPEG. little_exif will happily write an APP1 into a stub of

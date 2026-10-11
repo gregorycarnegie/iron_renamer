@@ -6,6 +6,7 @@ use crate::{
     batch::{self, BatchCfg, Collision, Mode},
     engine::{Ctx, RuleEntry, apply_entry, build_rule},
 };
+use rstest::rstest;
 use std::{
     collections::HashMap,
     fs,
@@ -112,96 +113,52 @@ fn full_flow_preview_chain_collision_undo() {
 
 /// Table-driven rules over Unicode names, dotfiles, multiple extensions,
 /// and extensionless files.
-#[test]
-fn rules_on_awkward_names() {
-    type Case<'a> = (&'a str, &'a [&'a str], &'a str, &'a str, &'a str, &'a str);
-    let cases: &[Case<'_>] = &[
-        // (kind, mods, a, b, input, expected)
-        ("replace", &[], "é", "e", "café.txt", "cafe.txt"),
-        ("replace", &["ci"], "CAFÉ", "x", "café.txt", "x.txt"),
-        ("case", &[], "upper", "", "grüße.txt", "GRÜSSE.TXT"),
-        (
-            "case",
-            &["name"],
-            "title",
-            "",
-            "мой файл.txt",
-            "Мой Файл.txt",
-        ),
-        ("case", &[], "invert", "", "aBc🎉.TXT", "AbC🎉.txt"),
-        // dotfiles are all stem, no extension
-        ("pattern", &[], "<name>_x", "", ".gitignore", ".gitignore_x"),
-        ("case", &["ext"], "upper", "", ".gitignore", ".gitignore"),
-        // only the last extension is the extension
-        (
-            "insert",
-            &["name"],
-            "_v2",
-            "end",
-            "archive.tar.gz",
-            "archive.tar_v2.gz",
-        ),
-        (
-            "case",
-            &["ext"],
-            "upper",
-            "",
-            "archive.tar.gz",
-            "archive.tar.GZ",
-        ),
-        // extensionless: ext rules build one, name rules take the whole name
-        ("insert", &["ext"], "bak", "end", "README", "README.bak"),
-        ("case", &["name"], "lower", "", "README", "readme"),
-        (
-            "remove",
-            &[],
-            "diacritics",
-            "",
-            "žluťoučký.txt",
-            "zlutoucky.txt",
-        ),
-        ("trim", &["name"], "", "", " spaced .txt", "spaced.txt"),
-        (
-            "insert",
-            &["name"],
-            "✨",
-            "start",
-            "🎉party.txt",
-            "✨🎉party.txt",
-        ),
-        (
-            "remove",
-            &["name"],
-            "pos:0,1",
-            "",
-            "🎉party.txt",
-            "party.txt",
-        ),
-    ];
-    for (kind, mods, a, b, input, expected) in cases {
-        let (rule, part) = build_rule(kind, mods, a, b).unwrap();
-        let e = RuleEntry {
-            rule,
-            part,
-            cond: None,
-        };
-        let path = PathBuf::from(input);
-        let ctx = Ctx {
-            index: 0,
-            num: 1,
-            pad: 1,
-            folder_num: 1,
-            total: 1,
-            csv: &[],
-            path: &path,
-            original: input,
-        };
-        assert_eq!(
-            apply_entry(&e, input, &ctx),
-            *expected,
-            "{kind} {mods:?} {a:?} {b:?} on {input:?}"
-        );
-    }
+#[rstest]
+#[case::unicode_replace("replace", &[], "é", "e", "café.txt", "cafe.txt")]
+#[case::unicode_case_insensitive("replace", &["ci"], "CAFÉ", "x", "café.txt", "x.txt")]
+#[case::german_uppercase("case", &[], "upper", "", "grüße.txt", "GRÜSSE.TXT")]
+#[case::cyrillic_title("case", &["name"], "title", "", "мой файл.txt", "Мой Файл.txt")]
+#[case::emoji_invert("case", &[], "invert", "", "aBc🎉.TXT", "AbC🎉.txt")]
+#[case::dotfile_pattern("pattern", &[], "<name>_x", "", ".gitignore", ".gitignore_x")]
+#[case::dotfile_extension("case", &["ext"], "upper", "", ".gitignore", ".gitignore")]
+#[case::multiple_extensions_insert("insert", &["name"], "_v2", "end", "archive.tar.gz", "archive.tar_v2.gz")]
+#[case::last_extension_only("case", &["ext"], "upper", "", "archive.tar.gz", "archive.tar.GZ")]
+#[case::extensionless_insert("insert", &["ext"], "bak", "end", "README", "README.bak")]
+#[case::extensionless_case("case", &["name"], "lower", "", "README", "readme")]
+#[case::diacritics("remove", &[], "diacritics", "", "žluťoučký.txt", "zlutoucky.txt")]
+#[case::spaces("trim", &["name"], "", "", " spaced .txt", "spaced.txt")]
+#[case::emoji_insert("insert", &["name"], "✨", "start", "🎉party.txt", "✨🎉party.txt")]
+#[case::emoji_remove("remove", &["name"], "pos:0,1", "", "🎉party.txt", "party.txt")]
+fn rules_on_awkward_names(
+    #[case] kind: &str,
+    #[case] mods: &[&str],
+    #[case] a: &str,
+    #[case] b: &str,
+    #[case] input: &str,
+    #[case] expected: &str,
+) {
+    let (rule, part) = build_rule(kind, mods, a, b).unwrap();
+    let e = RuleEntry {
+        rule,
+        part,
+        cond: None,
+    };
+    let path = PathBuf::from(input);
+    let ctx = Ctx {
+        index: 0,
+        num: 1,
+        pad: 1,
+        folder_num: 1,
+        total: 1,
+        csv: &[],
+        path: &path,
+        original: input,
+    };
+    assert_eq!(
+        apply_entry(&e, input, &ctx),
+        expected,
+        "{kind} {mods:?} {a:?} {b:?} on {input:?}"
+    );
 }
 
 /// Case-insensitive collision detection: two names differing only in case
@@ -236,55 +193,52 @@ fn case_insensitive_duplicate_detection() {
 
 /// Force a failure halfway through a batch in every mode: the failed item's
 /// file stays untouched and the same op succeeds on retry.
-#[test]
-fn mid_batch_failure_recovery_all_modes() {
-    for (label, mode) in [
-        ("rename", Mode::Rename),
-        ("copy", Mode::Copy),
-        ("move", Mode::Move),
-    ] {
-        let d = tmpdir(&format!("recover_{label}"));
-        let a = put(&d, "a.txt", "A");
-        let b = put(&d, "b.txt", "B");
-        let out = d.join("out");
-        let blocked = out.join("a.txt");
-        fs::create_dir_all(&out).unwrap();
-        put(&out, "a.txt", "blocker");
+#[rstest]
+#[case::rename("rename", Mode::Rename)]
+#[case::copy("copy", Mode::Copy)]
+#[case::move_mode("move", Mode::Move)]
+fn mid_batch_failure_recovery_all_modes(#[case] label: &str, #[case] mode: Mode) {
+    let d = tmpdir(&format!("recover_{label}"));
+    let a = put(&d, "a.txt", "A");
+    let b = put(&d, "b.txt", "B");
+    let out = d.join("out");
+    let blocked = out.join("a.txt");
+    fs::create_dir_all(&out).unwrap();
+    put(&out, "a.txt", "blocker");
 
-        let ops = vec![
-            batch::Op {
-                from: a.clone(),
-                to: blocked.clone(),
-            },
-            batch::Op {
-                from: b.clone(),
-                to: out.join("b.txt"),
-            },
-        ];
-        let res = batch::execute(ops, mode);
-        assert_eq!((res.renamed.len(), res.failed.len()), (1, 1), "{label}");
-        assert_eq!(
-            read(&a),
-            "A",
-            "{label}: failed op leaves its file untouched"
-        );
-        assert_eq!(read(&blocked), "blocker", "{label}: never overwrites");
-        assert_eq!(read(&out.join("b.txt")), "B", "{label}");
-        if mode == Mode::Copy {
-            assert_eq!(read(&b), "B", "copy keeps the source");
-        } else {
-            assert!(!b.exists(), "{label} removes the source");
-        }
-
-        // Retry the failed op after clearing the blocker.
-        fs::remove_file(&blocked).unwrap();
-        let retry: Vec<batch::Op> = res.failed.into_iter().map(|(op, _)| op).collect();
-        let res2 = batch::execute(retry, mode);
-        assert_eq!(
-            (res2.renamed.len(), res2.failed.len()),
-            (1, 0),
-            "{label} retry"
-        );
-        assert_eq!(read(&blocked), "A", "{label} retry lands");
+    let ops = vec![
+        batch::Op {
+            from: a.clone(),
+            to: blocked.clone(),
+        },
+        batch::Op {
+            from: b.clone(),
+            to: out.join("b.txt"),
+        },
+    ];
+    let res = batch::execute(ops, mode);
+    assert_eq!((res.renamed.len(), res.failed.len()), (1, 1), "{label}");
+    assert_eq!(
+        read(&a),
+        "A",
+        "{label}: failed op leaves its file untouched"
+    );
+    assert_eq!(read(&blocked), "blocker", "{label}: never overwrites");
+    assert_eq!(read(&out.join("b.txt")), "B", "{label}");
+    if mode == Mode::Copy {
+        assert_eq!(read(&b), "B", "copy keeps the source");
+    } else {
+        assert!(!b.exists(), "{label} removes the source");
     }
+
+    // Retry the failed op after clearing the blocker.
+    fs::remove_file(&blocked).unwrap();
+    let retry: Vec<batch::Op> = res.failed.into_iter().map(|(op, _)| op).collect();
+    let res2 = batch::execute(retry, mode);
+    assert_eq!(
+        (res2.renamed.len(), res2.failed.len()),
+        (1, 0),
+        "{label} retry"
+    );
+    assert_eq!(read(&blocked), "A", "{label} retry lands");
 }

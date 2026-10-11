@@ -766,6 +766,7 @@ fn die(msg: &str) -> ! {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rstest::rstest;
 
     #[test]
     fn clap_preserves_rule_order_and_suffix_modifiers() {
@@ -798,15 +799,12 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn clap_rejects_invalid_and_conflicting_options() {
-        for args in [
-            vec!["iron_renamer", "--sort", "random"],
-            vec!["iron_renamer", "--copy-to", "a", "--move-to", "b"],
-            vec!["iron_renamer", "undo", "not-a-number"],
-        ] {
-            assert!(Cli::command().try_get_matches_from(args).is_err());
-        }
+    #[rstest]
+    #[case::invalid_sort(&["iron_renamer", "--sort", "random"])]
+    #[case::conflicting_destinations(&["iron_renamer", "--copy-to", "a", "--move-to", "b"])]
+    #[case::invalid_batch_id(&["iron_renamer", "undo", "not-a-number"])]
+    fn clap_rejects_invalid_and_conflicting_options(#[case] args: &[&str]) {
+        assert!(Cli::command().try_get_matches_from(args).is_err());
     }
 
     #[test]

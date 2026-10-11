@@ -1,5 +1,6 @@
 use super::*;
 use proptest::prelude::*;
+use rstest::rstest;
 
 proptest! {
     #[test]
@@ -73,225 +74,141 @@ fn bench_rule_application() {
     }
 }
 
-#[test]
-fn replace_options() {
-    assert_eq!(
-        run(&entry("replace", &[], " ", "_"), "a b c.txt"),
-        "a_b_c.txt"
-    );
-    assert_eq!(
-        run(&entry("replace", &["first"], " ", "_"), "a b c.txt"),
-        "a_b c.txt"
-    );
-    assert_eq!(
-        run(&entry("replace", &["last"], " ", "_"), "a b c.txt"),
-        "a b_c.txt"
-    );
-    assert_eq!(
-        run(&entry("replace", &["n2"], "o", "0"), "foo woof.txt"),
-        "fo0 woof.txt"
-    );
-    assert_eq!(
-        run(&entry("replace", &["ci"], "IMG", "pic"), "img_Img.jpg"),
-        "pic_pic.jpg"
-    );
-    assert_eq!(
-        run(&entry("replace", &[], "É", "E"), "cafÉ.txt"),
-        "cafE.txt"
-    );
+#[rstest]
+#[case::all(&[], " ", "_", "a b c.txt", "a_b_c.txt")]
+#[case::first(&["first"], " ", "_", "a b c.txt", "a_b c.txt")]
+#[case::last(&["last"], " ", "_", "a b c.txt", "a b_c.txt")]
+#[case::nth(&["n2"], "o", "0", "foo woof.txt", "fo0 woof.txt")]
+#[case::case_insensitive(&["ci"], "IMG", "pic", "img_Img.jpg", "pic_pic.jpg")]
+#[case::unicode(&[], "É", "E", "cafÉ.txt", "cafE.txt")]
+fn replace_options(
+    #[case] mods: &[&str],
+    #[case] a: &str,
+    #[case] b: &str,
+    #[case] input: &str,
+    #[case] expected: &str,
+) {
+    assert_eq!(run(&entry("replace", mods, a, b), input), expected);
 }
 
-#[test]
-fn apply_to_parts() {
-    assert_eq!(
-        run(&entry("case", &["ext"], "lower", ""), "Photo.JPG"),
-        "Photo.jpg"
-    );
-    assert_eq!(
-        run(&entry("case", &["name"], "upper", ""), "photo.jpg"),
-        "PHOTO.jpg"
-    );
-    assert_eq!(
-        run(&entry("replace", &["name"], "o", "0"), "photo.mov"),
-        "ph0t0.mov"
-    );
-    assert_eq!(
-        run(&entry("case", &[], "lower", ""), "Photo.JPG"),
-        "photo.jpg"
-    );
-    // no extension: ext rules are a no-op, name rules hit the whole thing
-    assert_eq!(
-        run(&entry("case", &["ext"], "upper", ""), "readme"),
-        "readme"
-    );
-    assert_eq!(
-        run(&entry("case", &["name"], "upper", ""), "readme"),
-        "README"
-    );
+#[rstest]
+#[case::extension("case", &["ext"], "lower", "", "Photo.JPG", "Photo.jpg")]
+#[case::name("case", &["name"], "upper", "", "photo.jpg", "PHOTO.jpg")]
+#[case::replace_name("replace", &["name"], "o", "0", "photo.mov", "ph0t0.mov")]
+#[case::whole("case", &[], "lower", "", "Photo.JPG", "photo.jpg")]
+#[case::missing_extension("case", &["ext"], "upper", "", "readme", "readme")]
+#[case::extensionless_name("case", &["name"], "upper", "", "readme", "README")]
+fn apply_to_parts(
+    #[case] kind: &str,
+    #[case] mods: &[&str],
+    #[case] a: &str,
+    #[case] b: &str,
+    #[case] input: &str,
+    #[case] expected: &str,
+) {
+    assert_eq!(run(&entry(kind, mods, a, b), input), expected);
 }
 
-#[test]
-fn case_modes_and_scopes() {
-    assert_eq!(
-        run(&entry("case", &[], "title", ""), "my file.txt"),
-        "My File.Txt"
-    );
-    assert_eq!(
-        run(&entry("case", &["name"], "first", ""), "my file.txt"),
-        "My file.txt"
-    );
-    assert_eq!(run(&entry("case", &[], "invert", ""), "aBc.TXT"), "AbC.txt");
-    assert_eq!(
-        run(&entry("case", &["name"], "upper", "at:0,2"), "abcdef.txt"),
-        "ABcdef.txt"
-    );
-    assert_eq!(
-        run(&entry("case", &[], "upper", "img"), "img_img.jpg"),
-        "IMG_IMG.jpg"
-    );
+#[rstest]
+#[case::title(&[], "title", "", "my file.txt", "My File.Txt")]
+#[case::first(&["name"], "first", "", "my file.txt", "My file.txt")]
+#[case::invert(&[], "invert", "", "aBc.TXT", "AbC.txt")]
+#[case::positions(&["name"], "upper", "at:0,2", "abcdef.txt", "ABcdef.txt")]
+#[case::matching_text(&[], "upper", "img", "img_img.jpg", "IMG_IMG.jpg")]
+fn case_modes_and_scopes(
+    #[case] mods: &[&str],
+    #[case] a: &str,
+    #[case] b: &str,
+    #[case] input: &str,
+    #[case] expected: &str,
+) {
+    assert_eq!(run(&entry("case", mods, a, b), input), expected);
 }
 
-#[test]
-fn insert_positions() {
-    assert_eq!(
-        run(&entry("insert", &["name"], "new_", "start"), "a.txt"),
-        "new_a.txt"
-    );
-    assert_eq!(
-        run(&entry("insert", &["name"], "_old", "end"), "a.txt"),
-        "a_old.txt"
-    );
-    assert_eq!(
-        run(&entry("insert", &["name"], "-", "2"), "abcd.txt"),
-        "ab-cd.txt"
-    );
-    assert_eq!(
-        run(&entry("insert", &["name"], "-", "-1"), "abcd.txt"),
-        "abc-d.txt"
-    );
-    assert_eq!(
-        run(&entry("insert", &[], "X", "before:cd"), "abcd.txt"),
-        "abXcd.txt"
-    );
-    assert_eq!(
-        run(&entry("insert", &[], "X", "after:cd"), "abcd.txt"),
-        "abcdX.txt"
-    );
-    assert_eq!(
-        run(&entry("insert", &[], "X", "rbefore:\\d+"), "ab12.txt"),
-        "abX12.txt"
-    );
-    assert_eq!(
-        run(&entry("insert", &[], "X", "before:zzz"), "abcd.txt"),
-        "abcd.txt"
-    );
-    // tags in inserted text
-    assert_eq!(
-        run(&entry("insert", &["name"], "_<num>", "end"), "a.txt"),
-        "a_007.txt"
-    );
+#[rstest]
+#[case::start(&["name"], "new_", "start", "a.txt", "new_a.txt")]
+#[case::end(&["name"], "_old", "end", "a.txt", "a_old.txt")]
+#[case::position(&["name"], "-", "2", "abcd.txt", "ab-cd.txt")]
+#[case::negative_position(&["name"], "-", "-1", "abcd.txt", "abc-d.txt")]
+#[case::before(&[], "X", "before:cd", "abcd.txt", "abXcd.txt")]
+#[case::after(&[], "X", "after:cd", "abcd.txt", "abcdX.txt")]
+#[case::regex_before(&[], "X", "rbefore:\\d+", "ab12.txt", "abX12.txt")]
+#[case::missing_match(&[], "X", "before:zzz", "abcd.txt", "abcd.txt")]
+#[case::tags(&["name"], "_<num>", "end", "a.txt", "a_007.txt")]
+fn insert_positions(
+    #[case] mods: &[&str],
+    #[case] a: &str,
+    #[case] b: &str,
+    #[case] input: &str,
+    #[case] expected: &str,
+) {
+    assert_eq!(run(&entry("insert", mods, a, b), input), expected);
 }
 
-#[test]
-fn remove_kinds() {
-    assert_eq!(
-        run(&entry("remove", &["name"], "pos:1,2", ""), "abcd.txt"),
-        "ad.txt"
-    );
-    assert_eq!(
-        run(&entry("remove", &[], "chars:_-", ""), "a_b-c.txt"),
-        "abc.txt"
-    );
-    assert_eq!(
-        run(&entry("remove", &["name"], "digits", ""), "a1b2.txt"),
-        "ab.txt"
-    );
-    assert_eq!(
-        run(&entry("remove", &["name"], "upper", ""), "aXbY.txt"),
-        "ab.txt"
-    );
-    assert_eq!(
-        run(&entry("remove", &["name"], "lower", ""), "aXbY.txt"),
-        "XY.txt"
-    );
-    assert_eq!(
-        run(&entry("remove", &[], "diacritics", ""), "café_señor.txt"),
-        "cafe_senor.txt"
-    );
-    assert_eq!(
-        run(&entry("remove", &["name"], "re:\\(\\d+\\)", ""), "a(1).txt"),
-        "a.txt"
-    );
-    assert_eq!(
-        run(&entry("remove", &[], "copy", ""), "a copy.txt"),
-        "a .txt"
-    );
+#[rstest]
+#[case::positions(&["name"], "pos:1,2", "", "abcd.txt", "ad.txt")]
+#[case::characters(&[], "chars:_-", "", "a_b-c.txt", "abc.txt")]
+#[case::digits(&["name"], "digits", "", "a1b2.txt", "ab.txt")]
+#[case::uppercase(&["name"], "upper", "", "aXbY.txt", "ab.txt")]
+#[case::lowercase(&["name"], "lower", "", "aXbY.txt", "XY.txt")]
+#[case::diacritics(&[], "diacritics", "", "café_señor.txt", "cafe_senor.txt")]
+#[case::regex(&["name"], "re:\\(\\d+\\)", "", "a(1).txt", "a.txt")]
+#[case::literal(&[], "copy", "", "a copy.txt", "a .txt")]
+fn remove_kinds(
+    #[case] mods: &[&str],
+    #[case] a: &str,
+    #[case] b: &str,
+    #[case] input: &str,
+    #[case] expected: &str,
+) {
+    assert_eq!(run(&entry("remove", mods, a, b), input), expected);
 }
 
-#[test]
-fn trim_kinds() {
-    assert_eq!(
-        run(&entry("trim", &["name"], "", ""), " a b .txt"),
-        "a b.txt"
-    );
-    assert_eq!(
-        run(&entry("trim", &["name", "start"], "_", ""), "__a__.txt"),
-        "a__.txt"
-    );
-    assert_eq!(
-        run(&entry("trim", &["name", "all"], "_", ""), "_a_b_.txt"),
-        "ab.txt"
-    );
-    // inverse: keep only underscores and letters a/b at the edges trimmed away
-    assert_eq!(
-        run(&entry("trim", &["name", "inv"], "ab", ""), "xxabyy.txt"),
-        "ab.txt"
-    );
+#[rstest]
+#[case::whitespace(&["name"], "", "", " a b .txt", "a b.txt")]
+#[case::start(&["name", "start"], "_", "", "__a__.txt", "a__.txt")]
+#[case::all(&["name", "all"], "_", "", "_a_b_.txt", "ab.txt")]
+#[case::inverse(&["name", "inv"], "ab", "", "xxabyy.txt", "ab.txt")]
+fn trim_kinds(
+    #[case] mods: &[&str],
+    #[case] a: &str,
+    #[case] b: &str,
+    #[case] input: &str,
+    #[case] expected: &str,
+) {
+    assert_eq!(run(&entry("trim", mods, a, b), input), expected);
 }
 
-#[test]
-fn renumber_modes() {
-    // ctx.index is 6
-    assert_eq!(
-        run(&entry("renumber", &[], "1", "+10"), "img005.jpg"),
-        "img015.jpg"
-    );
-    assert_eq!(
-        run(&entry("renumber", &[], "1", "-9"), "ep12.mkv"),
-        "ep03.mkv"
-    );
-    assert_eq!(
-        run(&entry("renumber", &[], "2", "+1"), "s01e04.mkv"),
-        "s01e05.mkv"
-    );
-    assert_eq!(
-        run(&entry("renumber", &["pad4"], "1", "100/10"), "img5.jpg"),
-        "img0160.jpg"
-    );
-    assert_eq!(
-        run(&entry("renumber", &[], "3", "+1"), "a1b2.txt"),
-        "a1b2.txt"
-    );
+#[rstest]
+#[case::add(&[], "1", "+10", "img005.jpg", "img015.jpg")]
+#[case::subtract(&[], "1", "-9", "ep12.mkv", "ep03.mkv")]
+#[case::second_run(&[], "2", "+1", "s01e04.mkv", "s01e05.mkv")]
+#[case::sequence(&["pad4"], "1", "100/10", "img5.jpg", "img0160.jpg")]
+#[case::missing_run(&[], "3", "+1", "a1b2.txt", "a1b2.txt")]
+fn renumber_modes(
+    #[case] mods: &[&str],
+    #[case] a: &str,
+    #[case] b: &str,
+    #[case] input: &str,
+    #[case] expected: &str,
+) {
+    assert_eq!(run(&entry("renumber", mods, a, b), input), expected);
 }
 
-#[test]
-fn move_and_swap() {
-    assert_eq!(
-        run(&entry("move", &["name"], "re:\\d+", "start"), "abc123.txt"),
-        "123abc.txt"
-    );
-    assert_eq!(
-        run(&entry("move", &["name"], "CD", "end"), "abCDef.txt"),
-        "abefCD.txt"
-    );
-    assert_eq!(
-        run(&entry("swap", &["name"], " - ", ""), "Artist - Title.mp3"),
-        "Title - Artist.mp3"
-    );
-    assert_eq!(
-        run(&entry("swap", &["name"], " - ", ""), "NoSep.mp3"),
-        "NoSep.mp3"
-    );
+#[rstest]
+#[case::move_regex("move", &["name"], "re:\\d+", "start", "abc123.txt", "123abc.txt")]
+#[case::move_literal("move", &["name"], "CD", "end", "abCDef.txt", "abefCD.txt")]
+#[case::swap("swap", &["name"], " - ", "", "Artist - Title.mp3", "Title - Artist.mp3")]
+#[case::missing_separator("swap", &["name"], " - ", "", "NoSep.mp3", "NoSep.mp3")]
+fn move_and_swap(
+    #[case] kind: &str,
+    #[case] mods: &[&str],
+    #[case] a: &str,
+    #[case] b: &str,
+    #[case] input: &str,
+    #[case] expected: &str,
+) {
+    assert_eq!(run(&entry(kind, mods, a, b), input), expected);
 }
 
 #[test]
@@ -345,21 +262,18 @@ fn conditions_gate_rules() {
     assert_eq!(run(&e, "a.jpg"), "A.JPG");
 }
 
-#[test]
-fn pattern_uses_shared_tags() {
-    assert_eq!(
-        run(&entry("pattern", &[], "x_<num>.<ext>", ""), "old.jpg"),
-        "x_007.jpg"
-    );
-    assert_eq!(
-        run(&entry("pattern", &[], "<parent>_<name>!", ""), "noext"),
-        "trip_noext!"
-    );
-    // pattern applied to the stem only keeps the real extension
-    assert_eq!(
-        run(&entry("pattern", &["name"], "<name>_<num>", ""), "a.jpg"),
-        "a_007.jpg"
-    );
+#[rstest]
+#[case::number_and_extension(&[], "x_<num>.<ext>", "", "old.jpg", "x_007.jpg")]
+#[case::parent_and_name(&[], "<parent>_<name>!", "", "noext", "trip_noext!")]
+#[case::stem_only(&["name"], "<name>_<num>", "", "a.jpg", "a_007.jpg")]
+fn pattern_uses_shared_tags(
+    #[case] mods: &[&str],
+    #[case] a: &str,
+    #[case] b: &str,
+    #[case] input: &str,
+    #[case] expected: &str,
+) {
+    assert_eq!(run(&entry("pattern", mods, a, b), input), expected);
 }
 
 #[test]

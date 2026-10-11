@@ -228,6 +228,7 @@ pub(super) fn date_str(id_millis: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rstest::rstest;
 
     #[test]
     fn history_codec_roundtrips_delimiter_paths_and_reads_v1() {
@@ -261,51 +262,56 @@ mod tests {
     // ── mutation-testing gap fills (2026-08-30 baseline) ──
 
     #[test]
-    fn hex_round_trips_every_byte_and_rejects_bad_input() {
+    fn hex_round_trips_every_byte() {
         let all: Vec<u8> = (0..=255u8).collect();
         let encoded = hex(&all);
         assert_eq!(encoded.len(), 512);
         assert!(encoded.starts_with("000102"), "{}", &encoded[..6]);
         assert!(encoded.ends_with("fdfeff"));
         assert_eq!(unhex(&encoded).unwrap(), all);
+    }
 
-        // Upper case is accepted, and the two nibbles must not be swapped.
-        assert_eq!(unhex("A5").unwrap(), vec![0xA5]);
-        assert_eq!(unhex("5a").unwrap(), vec![0x5a]);
-        assert_eq!(unhex("0F").unwrap(), vec![0x0F]);
-        assert_eq!(unhex("F0").unwrap(), vec![0xF0]);
+    #[rstest]
+    #[case::uppercase("A5", Some(vec![0xA5]))]
+    #[case::lowercase("5a", Some(vec![0x5a]))]
+    #[case::low_nibble("0F", Some(vec![0x0F]))]
+    #[case::high_nibble("F0", Some(vec![0xF0]))]
+    #[case::odd_length("abc", None)]
+    #[case::not_hex("zz", None)]
+    #[case::past_f("g0", None)]
+    fn unhex_accepts_both_cases_and_rejects_bad_input(
+        #[case] input: &str,
+        #[case] expected: Option<Vec<u8>>,
+    ) {
+        assert_eq!(unhex(input), expected);
+    }
 
-        assert_eq!(unhex("abc"), None, "odd length");
-        assert_eq!(unhex("zz"), None, "not hex");
-        assert_eq!(unhex("g0"), None, "just past 'f'");
+    #[rstest]
+    #[case::plain("C:/plain/file.txt")]
+    #[case::space_and_tab("C:/with space/and\ttab.txt")]
+    #[case::newline("C:/new\nline.txt")]
+    #[case::unicode("C:/unicode/naïve — file.txt")]
+    fn paths_round_trip_through_the_history_encoding(#[case] raw: &str) {
+        // Spaces, tabs and newlines must survive a line-oriented file.
+        let p = PathBuf::from(raw);
+        let enc = encode_path(&p);
+        assert!(
+            !enc.contains(['\t', '\n', ' ']),
+            "encoding leaked whitespace: {enc}"
+        );
+        assert_eq!(decode_path(&enc).as_ref(), Some(&p), "round trip of {raw}");
     }
 
     #[test]
-    fn paths_round_trip_through_the_history_encoding() {
-        // Spaces, tabs and newlines must survive a line-oriented file.
-        for raw in [
-            "C:/plain/file.txt",
-            "C:/with space/and\ttab.txt",
-            "C:/new\nline.txt",
-            "C:/unicode/naïve — file.txt",
-        ] {
-            let p = PathBuf::from(raw);
-            let enc = encode_path(&p);
-            assert!(
-                !enc.contains(['\t', '\n', ' ']),
-                "encoding leaked whitespace: {enc}"
-            );
-            assert_eq!(decode_path(&enc).as_ref(), Some(&p), "round trip of {raw}");
-        }
+    fn path_decoder_rejects_invalid_hex() {
         assert_eq!(decode_path("nothex"), None);
     }
 
-    #[test]
-    fn date_str_formats_the_batch_id_as_utc_minutes() {
-        // 2001-05-06 07:08:09 UTC, in milliseconds.
-        assert_eq!(date_str(989_132_889_000), "2001-05-06 07:08 UTC");
-        assert_eq!(date_str(0), "1970-01-01 00:00 UTC");
-        // Milliseconds are divided away, not multiplied or taken modulo.
-        assert_eq!(date_str(989_132_889_999), "2001-05-06 07:08 UTC");
+    #[rstest]
+    #[case::timestamp(989_132_889_000, "2001-05-06 07:08 UTC")]
+    #[case::epoch(0, "1970-01-01 00:00 UTC")]
+    #[case::subsecond(989_132_889_999, "2001-05-06 07:08 UTC")]
+    fn date_str_formats_the_batch_id_as_utc_minutes(#[case] id: u64, #[case] expected: &str) {
+        assert_eq!(date_str(id), expected);
     }
 }

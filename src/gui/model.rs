@@ -172,6 +172,7 @@ pub(super) fn specs_from_preset(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rstest::rstest;
     use std::fs;
 
     #[test]
@@ -210,19 +211,6 @@ mod tests {
             a: a.into(),
             b: b.into(),
             mods: String::new(),
-        }
-    }
-
-    #[test]
-    fn gui_rule_summaries_per_kind() {
-        for (s, expected) in [
-            (spec("regex", r"\d+", "n"), r#"/\d+/ → "n""#),
-            (spec("insert", "x", ""), "\"x\" @ end"),
-            (spec("names", "a\nb\nc", ""), "3 name(s)"),
-            (spec("trim", "", ""), "whitespace"),
-            (spec("case", "upper", ""), "upper"),
-        ] {
-            assert_eq!(s.summary(), expected);
         }
     }
 
@@ -309,33 +297,33 @@ mod tests {
 
     // ── mutation-testing gap fills (2026-08-30 baseline) ──
 
-    #[test]
-    fn every_rule_kind_summarises_distinctly() {
-        // Each arm must produce its own shape; falling through to the default
-        // would just echo `a` for all of them.
-        assert_eq!(spec("replace", "x", "y").summary(), "\"x\" → \"y\"");
-        assert_eq!(spec("regex", "x", "y").summary(), "/x/ → \"y\"");
-        assert_eq!(spec("move", "x", "start").summary(), "\"x\" → start");
-        assert_eq!(spec("renumber", "2", "+10").summary(), "#2 +10");
-        assert_eq!(spec("swap", "-", "").summary(), "around \"-\"");
-        assert_eq!(spec("pairs", "a=b\nc=d", "").summary(), "2 pair(s)");
-        assert_eq!(spec("names", "a\nb\nc", "").summary(), "3 name(s)");
-        assert_eq!(spec("js", "one\ntwo", "").summary(), "script · 2 line(s)");
-
-        // Guarded arms: empty b falls back to a default, not to the raw value.
-        assert_eq!(spec("move", "x", "").summary(), "\"x\" → end");
-        assert_eq!(spec("insert", "x", "").summary(), "\"x\" @ end");
-        // "case" only gains the "@ part" half when b is set.
-        assert_eq!(spec("case", "upper", "").summary(), "upper");
-        assert_eq!(spec("case", "upper", "name").summary(), "upper @ name");
-        // "trim" names whitespace only when a is empty.
-        assert_eq!(spec("trim", "", "").summary(), "whitespace");
-        assert_eq!(spec("trim", "-_", "").summary(), "-_");
-
-        // Mods are appended whatever the kind.
-        let mut m = spec("swap", "-", "");
-        m.mods = "ci".into();
-        assert_eq!(m.summary(), "around \"-\" [ci]");
+    #[rstest]
+    #[case::replace("replace", "x", "y", "", "\"x\" → \"y\"")]
+    #[case::regex("regex", "x", "y", "", "/x/ → \"y\"")]
+    #[case::move_mode("move", "x", "start", "", "\"x\" → start")]
+    #[case::renumber("renumber", "2", "+10", "", "#2 +10")]
+    #[case::swap("swap", "-", "", "", "around \"-\"")]
+    #[case::pairs("pairs", "a=b\nc=d", "", "", "2 pair(s)")]
+    #[case::names("names", "a\nb\nc", "", "", "3 name(s)")]
+    #[case::js("js", "one\ntwo", "", "", "script · 2 line(s)")]
+    #[case::move_default("move", "x", "", "", "\"x\" → end")]
+    #[case::insert_default("insert", "x", "", "", "\"x\" @ end")]
+    #[case::case("case", "upper", "", "", "upper")]
+    #[case::case_scope("case", "upper", "name", "", "upper @ name")]
+    #[case::trim_whitespace("trim", "", "", "", "whitespace")]
+    #[case::trim_characters("trim", "-_", "", "", "-_")]
+    #[case::regex_escapes("regex", r"\d+", "n", "", r#"/\d+/ → "n""#)]
+    #[case::modifiers("swap", "-", "", "ci", "around \"-\" [ci]")]
+    fn every_rule_kind_summarises_distinctly(
+        #[case] kind: &str,
+        #[case] a: &str,
+        #[case] b: &str,
+        #[case] mods: &str,
+        #[case] expected: &str,
+    ) {
+        let mut rule = spec(kind, a, b);
+        rule.mods = mods.into();
+        assert_eq!(rule.summary(), expected);
     }
 
     #[test]

@@ -161,6 +161,7 @@ pub fn json_str(s: &str) -> String {
 mod tests {
     use super::*;
     use proptest::prelude::*;
+    use rstest::rstest;
 
     proptest! {
         #[test]
@@ -213,16 +214,21 @@ mod tests {
         assert_eq!(q.rules, p.rules);
     }
 
-    #[test]
-    fn csv_split_handles_quotes() {
-        assert_eq!(csv_split("a,b,c"), vec!["a", "b", "c"]);
-        assert_eq!(csv_split(r#""a,b",c"#), vec!["a,b", "c"]);
-        assert_eq!(csv_split(r#""say ""hi""",x"#), vec![r#"say "hi""#, "x"]);
-        assert_eq!(csv_split("one"), vec!["one"]);
-        assert_eq!(csv_field("plain.txt"), "plain.txt");
-        assert_eq!(csv_field("a,b"), "\"a,b\"");
-        assert_eq!(csv_field("q\"t"), "\"q\"\"t\"");
-        assert_eq!(json_str("a\"b\\c"), r#""a\"b\\c""#);
+    #[rstest]
+    #[case::plain("a,b,c", &["a", "b", "c"])]
+    #[case::quoted_comma(r#""a,b",c"#, &["a,b", "c"])]
+    #[case::escaped_quote(r#""say ""hi""",x"#, &[r#"say "hi""#, "x"])]
+    #[case::single_field("one", &["one"])]
+    fn csv_split_handles_quotes(#[case] input: &str, #[case] expected: &[&str]) {
+        assert_eq!(csv_split(input), expected);
+    }
+
+    #[rstest]
+    #[case::plain("plain.txt", "plain.txt")]
+    #[case::comma("a,b", "\"a,b\"")]
+    #[case::quote("q\"t", "\"q\"\"t\"")]
+    fn csv_field_escapes_special_characters(#[case] input: &str, #[case] expected: &str) {
+        assert_eq!(csv_field(input), expected);
     }
 
     // ── mutation-testing gap fills (2026-08-30 baseline) ──
@@ -238,14 +244,17 @@ mod tests {
         assert_eq!(p.file_name().unwrap(), "presets");
     }
 
-    #[test]
-    fn json_escapes_control_characters_but_not_printable_ones() {
-        // 0x20 (space) is the first printable character and must survive.
-        assert_eq!(json_str("a b"), "\"a b\"");
-        assert_eq!(json_str("tab\there"), "\"tab\\there\"");
-        assert_eq!(json_str("nl\nhere"), "\"nl\\nhere\"");
-        assert_eq!(json_str("q\"s\\"), "\"q\\\"s\\\\\"");
-        // 0x1f is the last control character and must be escaped.
-        assert_eq!(json_str("\u{1f}"), "\"\\u001f\"");
+    #[rstest]
+    #[case::space("a b", "\"a b\"")]
+    #[case::tab("tab\there", "\"tab\\there\"")]
+    #[case::newline("nl\nhere", "\"nl\\nhere\"")]
+    #[case::quote_and_backslash("q\"s\\", "\"q\\\"s\\\\\"")]
+    #[case::last_control_character("\u{1f}", "\"\\u001f\"")]
+    #[case::mixed_escapes("a\"b\\c", r#""a\"b\\c""#)]
+    fn json_escapes_control_characters_but_not_printable_ones(
+        #[case] input: &str,
+        #[case] expected: &str,
+    ) {
+        assert_eq!(json_str(input), expected);
     }
 }

@@ -592,6 +592,7 @@ fn modify(val: String, m: &str) -> Option<String> {
 mod tests {
     use super::*;
     use proptest::prelude::*;
+    use rstest::rstest;
     use std::path::Path;
 
     proptest! {
@@ -638,33 +639,39 @@ mod tests {
         }
     }
 
-    #[test]
-    fn expands_tags_and_leaves_unknown() {
+    #[rstest]
+    #[case::name_number_extension("<name>_<num>.<ext>", "img.jpg", "img_007.jpg")]
+    #[case::original_name("<oname>", "img.jpg", "orig img")]
+    #[case::parent_index("<parent>-<index>", "img.jpg", "trip-5")]
+    #[case::case_insensitive("<NAME>.<Ext>", "img.jpg", "img.jpg")]
+    #[case::unknown("a<unknown>b", "img.jpg", "a<unknown>b")]
+    #[case::plain_angle_brackets("2 < 3 > 1", "img.jpg", "2 < 3 > 1")]
+    #[case::unterminated("<name", "img.jpg", "<name")]
+    fn expands_tags_and_leaves_unknown(
+        #[case] template: &str,
+        #[case] input: &str,
+        #[case] expected: &str,
+    ) {
         let path = Path::new("C:/photos/trip/img.jpg");
         let c = ctx(path, "orig img.jpg");
-        assert_eq!(expand("<name>_<num>.<ext>", "img.jpg", &c), "img_007.jpg");
-        assert_eq!(expand("<oname>", "img.jpg", &c), "orig img");
-        assert_eq!(expand("<parent>-<index>", "img.jpg", &c), "trip-5");
-        assert_eq!(expand("<NAME>.<Ext>", "img.jpg", &c), "img.jpg");
-        assert_eq!(expand("a<unknown>b", "img.jpg", &c), "a<unknown>b");
-        assert_eq!(expand("2 < 3 > 1", "img.jpg", &c), "2 < 3 > 1");
-        assert_eq!(expand("<name", "img.jpg", &c), "<name");
+        assert_eq!(expand(template, input, &c), expected);
     }
 
-    #[test]
-    fn counter_variants() {
+    #[rstest]
+    #[case::number("<num>", "a.txt", "007")]
+    #[case::start_step("<num:100:10>", "a.txt", "140")]
+    #[case::negative_step("<num:10:-2>", "a.txt", "002")]
+    #[case::hex("<hex:250:2>", "a.txt", "102")]
+    #[case::alpha("<alpha>", "a.txt", "g")]
+    #[case::alpha_start("<alpha:aa>", "a.txt", "ae")]
+    #[case::roman("<roman:10:10>", "a.txt", "L")]
+    #[case::folder_number("<dirnum>", "a.txt", "002")]
+    #[case::folder_start_step("<dirnum:0:5>", "a.txt", "005")]
+    #[case::index("<index>", "a.txt", "5")]
+    fn counter_variants(#[case] template: &str, #[case] input: &str, #[case] expected: &str) {
         let path = Path::new("a.txt");
-        let c = ctx(path, "a.txt"); // index 4, num 7, pad 3, folder_num 2
-        assert_eq!(expand("<num>", "a.txt", &c), "007");
-        assert_eq!(expand("<num:100:10>", "a.txt", &c), "140");
-        assert_eq!(expand("<num:10:-2>", "a.txt", &c), "002");
-        assert_eq!(expand("<hex:250:2>", "a.txt", &c), "102"); // 258 = 0x102
-        assert_eq!(expand("<alpha>", "a.txt", &c), "g"); // 7
-        assert_eq!(expand("<alpha:aa>", "a.txt", &c), "ae"); // 27 + 4
-        assert_eq!(expand("<roman:10:10>", "a.txt", &c), "L"); // 50
-        assert_eq!(expand("<dirnum>", "a.txt", &c), "002");
-        assert_eq!(expand("<dirnum:0:5>", "a.txt", &c), "005");
-        assert_eq!(expand("<index>", "a.txt", &c), "5");
+        let c = ctx(path, "a.txt");
+        assert_eq!(expand(template, input, &c), expected);
     }
 
     #[test]
@@ -677,41 +684,36 @@ mod tests {
         assert_eq!(parse_offset("-2h"), Some(-7200));
     }
 
-    #[test]
-    fn modifiers() {
+    #[rstest]
+    #[case::upper("<name|upper>", "img file.jpg", "IMG FILE")]
+    #[case::title("<name|title>", "img file.jpg", "Img File")]
+    #[case::substring("<name|sub:0,3>", "abcdef.jpg", "abc")]
+    #[case::negative_substring("<name|sub:-2>", "abcdef.jpg", "ef")]
+    #[case::padding("<index|pad:4>", "a.jpg", "0005")]
+    #[case::trim("<name|trim:_>", "_ab_.jpg", "ab")]
+    #[case::replace("<name|replace: ,_>", "a b.jpg", "a_b")]
+    #[case::fallback("<ext|fallback:none>", "noext", "none")]
+    #[case::addition("<num|+10>", "a.jpg", "017")]
+    #[case::multiplication("<index|*3>", "a.jpg", "15")]
+    #[case::unknown("<name|bogus>", "a.jpg", "<name|bogus>")]
+    #[case::chain("<name|upper|sub:0,2>", "abcd.jpg", "AB")]
+    fn modifiers(#[case] template: &str, #[case] input: &str, #[case] expected: &str) {
         let path = Path::new("a.txt");
         let c = ctx(path, "a.txt");
-        assert_eq!(expand("<name|upper>", "img file.jpg", &c), "IMG FILE");
-        assert_eq!(expand("<name|title>", "img file.jpg", &c), "Img File");
-        assert_eq!(expand("<name|sub:0,3>", "abcdef.jpg", &c), "abc");
-        assert_eq!(expand("<name|sub:-2>", "abcdef.jpg", &c), "ef");
-        assert_eq!(expand("<index|pad:4>", "a.jpg", &c), "0005");
-        assert_eq!(expand("<name|trim:_>", "_ab_.jpg", &c), "ab");
-        assert_eq!(expand("<name|replace: ,_>", "a b.jpg", &c), "a_b");
-        assert_eq!(expand("<ext|fallback:none>", "noext", &c), "none");
-        assert_eq!(expand("<num|+10>", "a.jpg", &c), "017");
-        assert_eq!(expand("<index|*3>", "a.jpg", &c), "15");
-        // bad modifier leaves the whole tag literal
-        assert_eq!(expand("<name|bogus>", "a.jpg", &c), "<name|bogus>");
-        assert_eq!(expand("<name|upper|sub:0,2>", "abcd.jpg", &c), "AB");
+        assert_eq!(expand(template, input, &c), expected);
     }
 
-    #[test]
-    fn split_modifier() {
+    #[rstest]
+    #[case::second("<name|split:-,2>", "a-b-c.jpg", "b")]
+    #[case::last("<name|split:-,-1>", "a-b-c.jpg", "c")]
+    #[case::whitespace("<name|split:,2>", "one  two three.jpg", "two")]
+    #[case::out_of_range_fallback("<name|split:-,9|fallback:x>", "a-b.jpg", "x")]
+    #[case::zero_index("<name|split:-,0>", "a-b.jpg", "<name|split:-,0>")]
+    #[case::missing_index("<name|split:->", "a-b.jpg", "<name|split:->")]
+    fn split_modifier(#[case] template: &str, #[case] input: &str, #[case] expected: &str) {
         let path = Path::new("a.txt");
         let c = ctx(path, "a.txt");
-        assert_eq!(expand("<name|split:-,2>", "a-b-c.jpg", &c), "b");
-        assert_eq!(expand("<name|split:-,-1>", "a-b-c.jpg", &c), "c");
-        // empty SEP = whitespace (AR's <Word:n>)
-        assert_eq!(expand("<name|split:,2>", "one  two three.jpg", &c), "two");
-        // out of range gives "" so |fallback applies
-        assert_eq!(expand("<name|split:-,9|fallback:x>", "a-b.jpg", &c), "x");
-        // N = 0 or missing N leaves the tag literal
-        assert_eq!(
-            expand("<name|split:-,0>", "a-b.jpg", &c),
-            "<name|split:-,0>"
-        );
-        assert_eq!(expand("<name|split:->", "a-b.jpg", &c), "<name|split:->");
+        assert_eq!(expand(template, input, &c), expected);
     }
 
     #[test]
@@ -757,11 +759,12 @@ mod tests {
         assert_eq!(expand("<csv:nope>", "a.txt", &c), "<csv:nope>");
     }
 
-    #[test]
-    fn human_sizes() {
-        assert_eq!(human_size(512), "512 B");
-        assert_eq!(human_size(1536), "1.5 KB");
-        assert_eq!(human_size(1_500_000_000), "1.4 GB");
+    #[rstest]
+    #[case::bytes(512, "512 B")]
+    #[case::kilobytes(1536, "1.5 KB")]
+    #[case::gigabytes(1_500_000_000, "1.4 GB")]
+    fn human_sizes(#[case] input: u64, #[case] expected: &str) {
+        assert_eq!(human_size(input), expected);
     }
 
     #[test]
@@ -782,11 +785,12 @@ mod tests {
         );
     }
 
-    #[test]
-    fn sanitizes_metadata_values() {
-        assert_eq!(sanitize("2024:05:01 10:30:00"), "2024-05-01 10-30-00");
-        assert_eq!(sanitize("a<b>c?d*e"), "abcde");
-        assert_eq!(sanitize("  padded  "), "padded");
+    #[rstest]
+    #[case::timestamp("2024:05:01 10:30:00", "2024-05-01 10-30-00")]
+    #[case::invalid_characters("a<b>c?d*e", "abcde")]
+    #[case::padding("  padded  ", "padded")]
+    fn sanitizes_metadata_values(#[case] input: &str, #[case] expected: &str) {
+        assert_eq!(sanitize(input), expected);
     }
 
     #[test]
@@ -872,14 +876,14 @@ mod tests {
         assert_eq!(expand("<size:zz>", "blob.bin", &c), "<size:zz>");
     }
 
-    #[test]
-    fn human_size_scales_and_stops_at_the_last_unit() {
-        assert_eq!(human_size(512), "512 B");
-        assert_eq!(human_size(1536), "1.5 KB");
-        assert_eq!(human_size(3 << 20), "3.0 MB");
-        assert_eq!(human_size(5 << 30), "5.0 GB");
-        // A petabyte must clamp at TB; running off the end of UNITS panics.
-        assert_eq!(human_size(1 << 50), "1024.0 TB");
+    #[rstest]
+    #[case::bytes(512, "512 B")]
+    #[case::kilobytes(1536, "1.5 KB")]
+    #[case::megabytes(3 << 20, "3.0 MB")]
+    #[case::gigabytes(5 << 30, "5.0 GB")]
+    #[case::petabytes_clamp_to_terabytes(1 << 50, "1024.0 TB")]
+    fn human_size_scales_and_stops_at_the_last_unit(#[case] input: u64, #[case] expected: &str) {
+        assert_eq!(human_size(input), expected);
     }
 
     #[test]
@@ -1008,19 +1012,22 @@ mod tests {
         );
     }
 
-    #[test]
-    fn arithmetic_and_case_mods() {
+    #[rstest]
+    #[case::lower("<name|lower>", "MiXeD.TXT", "mixed")]
+    #[case::upper("<name|upper>", "MiXeD.TXT", "MIXED")]
+    #[case::add("<num|+3>", "a.txt", "010")]
+    #[case::subtract("<num|-3>", "a.txt", "004")]
+    #[case::multiply("<num|*3>", "a.txt", "021")]
+    #[case::divide("<num|/3>", "a.txt", "002")]
+    #[case::unknown("<num|q5>", "a.txt", "<num|q5>")]
+    fn arithmetic_and_case_mods(
+        #[case] template: &str,
+        #[case] input: &str,
+        #[case] expected: &str,
+    ) {
         let path = Path::new("a.txt");
-        let c = ctx(path, "a.txt"); // num 7, pad 3 -> "007"
-        assert_eq!(expand("<name|lower>", "MiXeD.TXT", &c), "mixed");
-        assert_eq!(expand("<name|upper>", "MiXeD.TXT", &c), "MIXED");
-        // Width is preserved, and each operator is distinct at these values.
-        assert_eq!(expand("<num|+3>", "a.txt", &c), "010");
-        assert_eq!(expand("<num|-3>", "a.txt", &c), "004");
-        assert_eq!(expand("<num|*3>", "a.txt", &c), "021");
-        assert_eq!(expand("<num|/3>", "a.txt", &c), "002");
-        // An unknown mod is not an arithmetic one just because a number follows.
-        assert_eq!(expand("<num|q5>", "a.txt", &c), "<num|q5>");
+        let c = ctx(path, "a.txt");
+        assert_eq!(expand(template, input, &c), expected);
     }
 
     #[test]
