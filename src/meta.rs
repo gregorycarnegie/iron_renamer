@@ -58,16 +58,16 @@ fn read_fields(path: &Path) -> Option<Fields> {
     }
     match nom_exif::read_metadata(path) {
         Ok(nom_exif::Metadata::Exif(exif)) => {
-            for e in exif.iter() {
-                let name = match e.tag.tag() {
+            for e in exif.entries() {
+                let name = match e.tag().tag() {
                     Some(tag) => tag.to_string().to_ascii_lowercase(),
                     // codes nom-exif doesn't name but the aliases need
-                    None => match e.tag {
+                    None => match e.tag() {
                         nom_exif::TagOrCode::Unknown(0x013b) => "artist".into(),
                         _ => continue,
                     },
                 };
-                if let Some(v) = fmt_value(e.value) {
+                if let Some(v) = fmt_value(e.value()) {
                     map.insert(name, v);
                 }
             }
