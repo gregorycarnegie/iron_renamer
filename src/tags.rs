@@ -938,10 +938,12 @@ mod tests {
         let dir = scratch("times");
         let p = dir.join("dated.txt");
         fs::write(&p, "x").unwrap();
-        // Only modified moves; created and accessed stay at "now".
-        let spec = parse_touch("modified=2001-05-06 07:08").unwrap();
-        let (n, errs) = apply_touch(std::slice::from_ref(&p), &spec);
-        assert_eq!((n, errs.len()), (1, 0), "{errs:?}");
+        // macOS can lower creation time with mtime; seed an earlier year first.
+        for value in ["modified=2000-05-06 07:08", "modified=2001-05-06 07:08"] {
+            let spec = parse_touch(value).unwrap();
+            let (n, errs) = apply_touch(std::slice::from_ref(&p), &spec);
+            assert_eq!((n, errs.len()), (1, 0), "{errs:?}");
+        }
 
         let c = ctx(&p, "dated.txt");
         assert_eq!(
