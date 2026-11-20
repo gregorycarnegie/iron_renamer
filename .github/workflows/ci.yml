@@ -15,6 +15,23 @@ on:
     paths: *code
 
 jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    env:
+      VERUS_VERSION: 0.2026.11.02.8bf68ee
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.99.1
+      - name: Install Verus
+        run: |
+          curl --fail --location --retry 3 -o "$RUNNER_TEMP/verus.zip" \
+            "https://github.com/verus-lang/verus/releases/download/release/$VERUS_VERSION/verus-$VERUS_VERSION-x86-linux.zip"
+          unzip -q "$RUNNER_TEMP/verus.zip" -d "$RUNNER_TEMP"
+      - name: Verify arithmetic and syntax kernels
+        run: |
+          "$RUNNER_TEMP/verus-x86-linux/verus" --crate-type=lib src/arith.rs
+          "$RUNNER_TEMP/verus-x86-linux/verus" --crate-type=lib src/syntax.rs
+
   test:
     strategy:
       matrix:

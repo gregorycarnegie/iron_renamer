@@ -142,6 +142,16 @@ cargo build --release        # -> target/release/iron_renamer(.exe)
 cargo test
 ```
 
+CI also checks the proofs in `src/arith.rs` and `src/syntax.rs` with Verus
+`0.2026.11.02.8bf68ee` (Rust `1.99.1`). With that Verus release installed, run:
+
+```
+verus --crate-type=lib src/arith.rs
+verus --crate-type=lib src/syntax.rs
+```
+
+Keep the CI Verus version and the `vstd` dependency aligned when upgrading.
+
 ### Microsoft Store releases
 
 Pushing a `v*` tag builds x64 and ARM64 MSIX packages. Store submission is
