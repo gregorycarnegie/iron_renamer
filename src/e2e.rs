@@ -3,9 +3,10 @@
 // and forced mid-batch failures in every mode.
 
 use crate::{
-    batch::{self, BatchCfg, Collision, Mode},
+    batch::{self, BatchCfg, Collision, Mode, PlanItem},
     engine::{Ctx, RuleEntry, apply_entry, build_rule},
 };
+use googletest::prelude::*;
 use rstest::rstest;
 use std::{
     collections::HashMap,
@@ -46,7 +47,7 @@ fn rules(specs: &[(&str, &[&str], &str, &str)]) -> Vec<RuleEntry> {
 
 /// Preview a chain rename, hit a collision, resolve it with a policy,
 /// apply, and undo — the whole life of a batch.
-#[test]
+#[gtest]
 fn full_flow_preview_chain_collision_undo() {
     let d = tmpdir("full");
     put(&d, "img1.jpg", "one");
@@ -54,12 +55,12 @@ fn full_flow_preview_chain_collision_undo() {
     put(&d, "img3.jpg", "three");
     let files = vec![d.join("img1.jpg"), d.join("img2.jpg"), d.join("img3.jpg")];
     let shift = rules(&[("renumber", &[], "1", "+1")]); // img1->img2->img3->img4: a chain
-    let none = HashMap::new();
+    let no_overrides = HashMap::new();
     let cfg = BatchCfg {
         rules: &shift,
         start: 1,
         pad: 1,
-        overrides: &none,
+        overrides: &no_overrides,
         mode: Mode::Rename,
         dest: "",
         collision: Collision::Fail,
@@ -71,7 +72,13 @@ fn full_flow_preview_chain_collision_undo() {
     let items = batch::plan(&files, &cfg);
     let names: Vec<&str> = items.iter().map(|i| i.new_name.as_str()).collect();
     assert_eq!(names, vec!["img2.jpg", "img3.jpg", "img4.jpg"]);
-    assert!(items.iter().all(|i| i.changed && i.issue.is_none()));
+    expect_that!(
+        items,
+        each(all!(
+            field!(&PlanItem.changed, eq(true)),
+            field!(&PlanItem.issue, ref none())
+        ))
+    );
 
     // Collision: an unrelated img4.jpg blocks the end of the chain...
     put(&d, "img4.jpg", "blocker");
@@ -163,13 +170,13 @@ fn rules_on_awkward_names(
 
 /// Case-insensitive collision detection: two names differing only in case
 /// count as duplicates, like NTFS treats them.
-#[test]
+#[gtest]
 fn case_insensitive_duplicate_detection() {
     let d = tmpdir("caseins");
     put(&d, "x.txt", "");
     put(&d, "y.txt", "");
     let files = vec![d.join("x.txt"), d.join("y.txt")];
-    let none = HashMap::new();
+    let no_overrides = HashMap::new();
     // x -> same.txt, y -> SAME.txt: same file on a case-insensitive volume.
     let two = rules(&[
         ("replace", &[], "x.txt", "same.txt"),
@@ -179,7 +186,7 @@ fn case_insensitive_duplicate_detection() {
         rules: &two,
         start: 1,
         pad: 1,
-        overrides: &none,
+        overrides: &no_overrides,
         mode: Mode::Rename,
         dest: "",
         collision: Collision::Fail,
@@ -187,7 +194,7 @@ fn case_insensitive_duplicate_detection() {
         csv: &[],
     };
     let items = batch::plan(&files, &cfg);
-    assert!(items[0].issue.is_none());
+    expect_that!(items[0].issue, none());
     assert_eq!(items[1].issue.as_deref(), Some("duplicate target"));
 }
 

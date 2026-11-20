@@ -7,6 +7,7 @@ use std::{
 
 // ───────────────────────── timestamps
 
+#[derive(Debug)]
 pub enum TouchValue {
     Absolute(i64), // epoch secs, UTC
     Delta(i64),    // shift each selected field by this many seconds
@@ -15,6 +16,7 @@ pub enum TouchValue {
     FromExif,      // DateTimeOriginal / CreateDate from file metadata
 }
 
+#[derive(Debug)]
 pub struct TouchSpec {
     pub created: bool,
     pub modified: bool,
@@ -67,11 +69,12 @@ pub fn parse_touch(s: &str) -> Result<TouchSpec, String> {
     Ok(spec)
 }
 
-fn system_time(secs: i64) -> SystemTime {
-    if secs >= 0 {
-        UNIX_EPOCH + std::time::Duration::from_secs(secs as u64)
-    } else {
-        UNIX_EPOCH
+/// Epoch seconds as a SystemTime: before 1970 clamps to the epoch; None past
+/// what the platform can represent (Windows FILETIME tops out near year 60056).
+fn system_time(secs: i64) -> Option<SystemTime> {
+    match u64::try_from(secs) {
+        Ok(s) => UNIX_EPOCH.checked_add(std::time::Duration::from_secs(s)),
+        Err(_) => Some(UNIX_EPOCH),
     }
 }
 
@@ -97,9 +100,9 @@ fn touch_one(p: &Path, spec: &TouchSpec) -> Result<bool, String> {
             .unwrap_or(0)
     };
     let fixed: Option<SystemTime> = match &spec.value {
-        TouchValue::Absolute(s) => Some(system_time(*s)),
+        TouchValue::Absolute(s) => system_time(*s),
         TouchValue::Delta(_) => None, // per field, below
-        TouchValue::FromName => tags::extract_datetime(&name_of(p)).map(system_time),
+        TouchValue::FromName => tags::extract_datetime(&name_of(p)).and_then(system_time),
         TouchValue::FromParent => {
             let parent = std::path::absolute(p)
                 .ok()
@@ -109,14 +112,14 @@ fn touch_one(p: &Path, spec: &TouchSpec) -> Result<bool, String> {
                         .map(|n| n.to_string_lossy().into_owned())
                 })
                 .unwrap_or_default();
-            tags::extract_datetime(&parent).map(system_time)
+            tags::extract_datetime(&parent).and_then(system_time)
         }
         TouchValue::FromExif => {
             let v = crate::meta::get(p, "datetimeoriginal")
                 .filter(|v| !v.is_empty())
                 .or_else(|| crate::meta::get(p, "createdate"))
                 .ok_or("file unreadable")?;
-            tags::extract_datetime(&v).map(system_time)
+            tags::extract_datetime(&v).and_then(system_time)
         }
     };
     if fixed.is_none() && !matches!(spec.value, TouchValue::Delta(_)) {
@@ -128,7 +131,10 @@ fn touch_one(p: &Path, spec: &TouchSpec) -> Result<bool, String> {
         match (&spec.value, fixed) {
             (TouchValue::Delta(d), _) => {
                 let base = cur.map_err(|e| e.to_string())?;
-                Ok(system_time(secs_of(base) + d))
+                secs_of(base)
+                    .checked_add(*d)
+                    .and_then(system_time)
+                    .ok_or_else(|| format!("time delta {d}s is out of range"))
             }
             (_, Some(t)) => Ok(t),
             _ => unreachable!(),

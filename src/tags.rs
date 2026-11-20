@@ -36,6 +36,7 @@
 //             N 1-based, negative from the end) |fallback:TEXT
 //             |+N |-N |*N |/N
 
+use crate::arith::{self, seed_from, xorshift64};
 use crate::engine::{CaseMode, Ctx, change_case, split_ext};
 use std::{
     cell::{Cell, RefCell},
@@ -89,12 +90,12 @@ fn eval(body: &str, full_name: &str, ctx: &Ctx) -> Option<String> {
         "num" => format!(
             "{:0w$}",
             counter(&args, ctx.index, ctx.num, false)?,
-            w = ctx.pad
+            w = usize::from(ctx.pad)
         ),
         "hex" => format!(
             "{:0w$x}",
             counter(&args, ctx.index, ctx.num, false)?,
-            w = ctx.pad
+            w = usize::from(ctx.pad)
         ),
         "roman" => roman(counter(&args, ctx.index, ctx.num, false)?),
         "alpha" => alpha(counter(&args, ctx.index, ctx.num, true)?),
@@ -102,7 +103,7 @@ fn eval(body: &str, full_name: &str, ctx: &Ctx) -> Option<String> {
             format!(
                 "{:0w$}",
                 counter(&args, ctx.folder_num - 1, ctx.folder_num, false)?,
-                w = ctx.pad
+                w = usize::from(ctx.pad)
             )
         }
         "total" => {
@@ -153,9 +154,9 @@ fn eval(body: &str, full_name: &str, ctx: &Ctx) -> Option<String> {
                 "accessed" => fs::metadata(ctx.path).ok()?.accessed().ok()?,
                 _ => fs::metadata(ctx.path).ok()?.modified().ok()?,
             };
-            let mut secs = t.duration_since(UNIX_EPOCH).ok()?.as_secs() as i64;
+            let mut secs = i64::try_from(t.duration_since(UNIX_EPOCH).ok()?.as_secs()).ok()?;
             if let Some(off) = args.get(1) {
-                secs += parse_offset(off)?;
+                secs = secs.checked_add(parse_offset(off)?)?;
             }
             match args.first().filter(|s| !s.is_empty()).copied() {
                 Some("unix") => secs.to_string(),
@@ -165,13 +166,14 @@ fn eval(body: &str, full_name: &str, ctx: &Ctx) -> Option<String> {
         "rand" => {
             let min: i64 = args.first().and_then(|s| s.parse().ok()).unwrap_or(0);
             let max: i64 = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(9999);
-            if max < min {
-                return None;
-            }
-            (min + (rng() % (max - min + 1) as u64) as i64).to_string()
+            arith::rand_in(min, max, rng())?.to_string()
         }
         "rands" => {
-            let len: usize = args.first().and_then(|s| s.parse().ok()).unwrap_or(8);
+            // u16 caps the length; anything longer is a bad argument.
+            let len = match args.first().copied().unwrap_or("") {
+                "" => 8,
+                s => s.parse::<u16>().ok()?,
+            };
             const CS: &[u8] = b"abcdefghijklmnopqrstuvwxyz0123456789";
             (0..len)
                 .map(|_| CS[(rng() % CS.len() as u64) as usize] as char)
@@ -228,21 +230,22 @@ fn sanitize(v: &str) -> String {
 }
 
 // Counter value: no args -> the batch counter; with args -> START + STEP*i.
-// For <alpha>, START may be letters ("aa" = 27).
+// For <alpha>, START may be letters ("aa" = 27). Values too large for i64
+// count as bad arguments; the arithmetic is Verus-verified in tags/arith.rs.
 fn counter(args: &[&str], i: usize, default: usize, letters: bool) -> Option<i64> {
     if args.is_empty() || args[0].is_empty() {
-        return Some(default as i64);
+        return i64::try_from(default).ok();
     }
     let start: i64 = match args[0].parse() {
         Ok(n) => n,
-        Err(_) if letters => alpha_to_num(args[0])?,
+        Err(_) if letters => arith::alpha_to_num(args[0].as_bytes())?,
         Err(_) => return None,
     };
     let step: i64 = match args.get(1) {
         Some(s) => s.parse().ok()?,
         None => 1,
     };
-    Some((start + step * i as i64).max(0))
+    arith::counter_value(start, step, i)
 }
 
 pub(crate) fn alpha(mut n: i64) -> String {
@@ -257,21 +260,6 @@ pub(crate) fn alpha(mut n: i64) -> String {
     }
     s.reverse();
     String::from_utf8(s).unwrap()
-}
-
-fn alpha_to_num(s: &str) -> Option<i64> {
-    if s.is_empty() {
-        return None;
-    }
-    let mut n = 0i64;
-    for c in s.chars() {
-        let c = c.to_ascii_lowercase();
-        if !c.is_ascii_lowercase() {
-            return None;
-        }
-        n = n * 26 + (c as i64 - 'a' as i64 + 1);
-    }
-    Some(n)
 }
 
 fn roman(mut n: i64) -> String {
@@ -374,7 +362,7 @@ pub(crate) fn parse_offset(s: &str) -> Option<i64> {
         's' => (&s[..s.len() - 1], 1),
         _ => (s, 1),
     };
-    num.parse::<i64>().ok().map(|n| n * mult)
+    num.parse::<i64>().ok()?.checked_mul(mult)
 }
 
 /// Civil date from epoch seconds (Howard Hinnant's algorithm), UTC.
@@ -410,8 +398,12 @@ pub(crate) fn epoch_from_civil(y: i64, m: u32, d: u32, h: u32, mi: u32, s: u32) 
 pub(crate) fn extract_datetime(text: &str) -> Option<i64> {
     static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
     let re = RE.get_or_init(|| {
-        regex::Regex::new(r"(\d{4})\D?(\d{2})\D?(\d{2})(?:\D?(\d{2})\D?(\d{2})(?:\D?(\d{2}))?)?")
-            .unwrap()
+        // ASCII digits only: Unicode \d also matches e.g. Arabic-Indic digits,
+        // which str::parse rejects.
+        regex::Regex::new(
+            r"([0-9]{4})[^0-9]?([0-9]{2})[^0-9]?([0-9]{2})(?:[^0-9]?([0-9]{2})[^0-9]?([0-9]{2})(?:[^0-9]?([0-9]{2}))?)?",
+        )
+        .unwrap()
     });
     for c in re.captures_iter(text) {
         let g = |i: usize| {
@@ -469,21 +461,6 @@ fn fmt_dt(fmt: &str, secs: i64) -> String {
     out
 }
 
-/// One xorshift64 step (Marsaglia); 13/7/17 is the published shift triple.
-fn xorshift64(mut x: u64) -> u64 {
-    x ^= x << 13;
-    x ^= x >> 7;
-    x ^= x << 17;
-    x
-}
-
-/// Force a clock reading odd. xorshift64 maps 0 to 0, so a zero seed would
-/// return 0 for the rest of the thread's life; the low bit is the cheapest
-/// guarantee that never happens.
-fn seed_from(nanos: u64) -> u64 {
-    nanos | 1
-}
-
 // Seeded once per thread; random tags regenerate on every preview.
 fn rng() -> u64 {
     thread_local! { static STATE: Cell<u64> = const { Cell::new(0) }; }
@@ -520,14 +497,13 @@ fn modify(val: String, m: &str) -> Option<String> {
             } else {
                 (start as usize).min(chars.len())
             };
-            let to = match len {
-                Some(l) => (from + l).min(chars.len()),
-                None => chars.len(),
-            };
+            // No LEN = to the end.
+            let (from, to) = arith::char_window(from, len.unwrap_or(usize::MAX), chars.len());
             chars[from..to].iter().collect()
         }
         "pad" => {
-            let w: usize = arg.parse().ok()?;
+            // The formatter panics past u16::MAX; wider is a bad argument.
+            let w = usize::from(arg.parse::<u16>().ok()?);
             format!("{val:0>w$}")
         }
         "trim" => {
@@ -576,9 +552,9 @@ fn modify(val: String, m: &str) -> Option<String> {
             let n: i64 = op[1..].parse().ok()?;
             let v: i64 = val.trim().parse().ok()?;
             let r = match op.as_bytes()[0] {
-                b'+' => v + n,
-                b'-' => v - n,
-                b'*' => v * n,
+                b'+' => v.checked_add(n)?,
+                b'-' => v.checked_sub(n)?,
+                b'*' => v.checked_mul(n)?,
                 _ => v.checked_div(n)?,
             };
             // keep leading-zero width
@@ -591,6 +567,7 @@ fn modify(val: String, m: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use googletest::prelude::*;
     use proptest::prelude::*;
     use rstest::rstest;
     use std::path::Path;
@@ -598,12 +575,12 @@ mod tests {
     proptest! {
         #[test]
         fn alpha_counters_roundtrip(n in 1i64..=1_000_000) {
-            prop_assert_eq!(alpha_to_num(&alpha(n)), Some(n));
+            prop_assert_eq!(arith::alpha_to_num(alpha(n).as_bytes()), Some(n));
         }
 
         #[test]
         fn alpha_counters_reject_nonletters(s in "[^A-Za-z]+") {
-            prop_assert_eq!(alpha_to_num(&s), None);
+            prop_assert_eq!(arith::alpha_to_num(s.as_bytes()), None);
         }
 
         #[test]
@@ -624,6 +601,139 @@ mod tests {
             let path = Path::new("a.txt");
             prop_assert_eq!(expand(&template, "a.txt", &ctx(path, "a.txt")), template);
         }
+
+        #[test]
+        fn counter_tags_match_wide_arithmetic(start in edge_i64(), step in edge_i64()) {
+            let template = format!("<num:{start}:{step}>");
+            let v = start as i128 + step as i128 * 4; // ctx index 4
+            let expected = if v > i64::MAX as i128 {
+                template.clone()
+            } else {
+                format!("{:03}", v.max(0))
+            };
+            prop_assert_eq!(x(&template), expected);
+        }
+
+        #[test]
+        fn rand_tags_stay_in_range(a in edge_i64(), b in edge_i64()) {
+            let template = format!("<rand:{a}:{b}>");
+            let out = x(&template);
+            if b < a {
+                prop_assert_eq!(out, template);
+            } else {
+                let v: i64 = out.parse().unwrap();
+                prop_assert!(a <= v && v <= b, "{v} outside {a}..={b}");
+            }
+        }
+
+        #[test]
+        fn sub_takes_the_clamped_char_window(
+            stem in "[a-zé ]{1,10}",
+            start in edge_i64(),
+            len in prop::option::of(edge_usize()),
+        ) {
+            let chars: Vec<char> = stem.chars().collect();
+            let n = chars.len();
+            let from = if start < 0 {
+                n.saturating_sub(start.unsigned_abs() as usize)
+            } else {
+                (start as u64).min(n as u64) as usize
+            };
+            let to = len.map_or(n, |l| (from as u128 + l as u128).min(n as u128) as usize);
+            let arg = match len {
+                Some(l) => format!("{start},{l}"),
+                None => start.to_string(),
+            };
+            let full = format!("{stem}.txt");
+            let path = Path::new("/t/a.txt");
+            let out = expand(&format!("<name|sub:{arg}>"), &full, &ctx(path, &full));
+            prop_assert_eq!(out, chars[from..to].iter().collect::<String>());
+        }
+
+        #[test]
+        fn pad_widens_to_the_width_or_passes_through(
+            w in prop_oneof![0u64..12, 65_530u64..65_542, any::<u64>()],
+        ) {
+            let template = format!("<name|pad:{w}>");
+            let out = x(&template);
+            if w <= u16::MAX as u64 {
+                prop_assert_eq!(out.len() as u64, w.max(1));
+                prop_assert!(out.ends_with('a'));
+            } else {
+                prop_assert_eq!(out, template);
+            }
+        }
+
+        #[test]
+        fn offsets_match_wide_arithmetic(
+            n in edge_i64(),
+            (unit, mult) in prop::sample::select(vec![("d", 86_400), ("h", 3_600), ("m", 60), ("s", 1), ("", 1)]),
+        ) {
+            let wide = n as i128 * mult as i128;
+            let expected = i64::try_from(wide).ok();
+            prop_assert_eq!(parse_offset(&format!("{n}{unit}")), expected);
+        }
+
+        #[test]
+        fn datetime_extraction_never_panics(
+            text in prop_oneof![
+                "\\PC{0,30}",
+                // ASCII mixed with Arabic-Indic and Devanagari digits
+                "[0-9\u{0660}-\u{0669}\u{0966}-\u{096F}_ .-]{0,24}",
+            ],
+        ) {
+            let _ = extract_datetime(&text);
+        }
+
+        // Catch-all over the tag grammar with boundary arguments.
+        #[test]
+        fn any_tag_never_panics(
+            tag in prop::sample::select(vec![
+                "num", "hex", "alpha", "roman", "dirnum", "index", "total", "name",
+                "ext", "parent", "path", "subfolder", "size", "csv", "now", "rand",
+                "rands", "md5", "exif", "width",
+            ]),
+            a in tag_arg(),
+            b in tag_arg(),
+            modifier in prop_oneof![
+                Just(String::new()),
+                (prop::sample::select(vec!["sub", "pad", "split", "replace", "trim", "fallback"]), tag_arg())
+                    .prop_map(|(m, v)| format!("|{m}:{v}")),
+                (prop::sample::select(vec!["+", "-", "*", "/"]), edge_i64())
+                    .prop_map(|(op, n)| format!("|{op}{n}")),
+            ],
+        ) {
+            let _ = x(&format!("<{tag}:{a}:{b}{modifier}>"));
+        }
+    }
+
+    fn edge_i64() -> impl Strategy<Value = i64> {
+        prop_oneof![
+            -20i64..20,
+            Just(i64::MAX),
+            Just(i64::MIN),
+            Just(i64::MAX / 4),
+            any::<i64>(),
+        ]
+    }
+
+    fn edge_usize() -> impl Strategy<Value = usize> {
+        prop_oneof![0usize..12, Just(usize::MAX), any::<usize>()]
+    }
+
+    fn tag_arg() -> impl Strategy<Value = String> {
+        prop_oneof![
+            "[a-z0-9 ,.-]{0,6}",
+            edge_i64().prop_map(|n| n.to_string()),
+            edge_usize().prop_map(|n| n.to_string()),
+            (edge_i64(), edge_usize()).prop_map(|(a, b)| format!("{a},{b}")),
+        ]
+    }
+
+    /// Expand against the standard test ctx for "a.txt" (index 4, num 7, pad 3).
+    fn x(template: &str) -> String {
+        let path = Path::new("/t/a.txt");
+        expand(template, "a.txt", &ctx(path, "a.txt"))
     }
 
     fn ctx<'a>(path: &'a Path, original: &'a str) -> Ctx<'a> {
@@ -655,6 +765,50 @@ mod tests {
         let path = Path::new("C:/photos/trip/img.jpg");
         let c = ctx(path, "orig img.jpg");
         assert_eq!(expand(template, input, &c), expected);
+    }
+
+    // Arithmetic past i64 (or widths past u16) used to panic in debug builds
+    // and wrap in release ones; it is now a bad argument. Counter index is 4.
+    #[rstest]
+    #[case::start_overflows("<num:9223372036854775807:1>", "<num:9223372036854775807:1>")]
+    #[case::step_overflows("<num:1:9223372036854775807>", "<num:1:9223372036854775807>")]
+    #[case::alpha_start_overflows("<alpha:zzzzzzzzzzzzzzz>", "<alpha:zzzzzzzzzzzzzzz>")]
+    #[case::largest_value_fits("<num:9223372036854775803:1>", "9223372036854775807")]
+    #[case::huge_negative_clamps_to_zero("<num:-9223372036854775807:-9223372036854775807>", "000")]
+    #[case::modifier_add_overflows("<num|+9223372036854775807>", "<num|+9223372036854775807>")]
+    #[case::modifier_sub_overflows(
+        "<num|-9223372036854775807|-9>",
+        "<num|-9223372036854775807|-9>"
+    )]
+    #[case::modifier_mul_overflows("<num|*9223372036854775807>", "<num|*9223372036854775807>")]
+    #[case::offset_multiply_overflows("<now::9223372036854775807d>", "<now::9223372036854775807d>")]
+    #[case::offset_add_overflows("<now::9223372036854775807>", "<now::9223372036854775807>")]
+    #[case::sub_length_to_usize_max("<name|sub:1,18446744073709551615>", "")]
+    #[case::pad_wider_than_the_formatter("<name|pad:65536>", "<name|pad:65536>")]
+    #[case::rands_longer_than_u16("<rands:65536>", "<rands:65536>")]
+    #[gtest]
+    fn bad_numeric_arguments_pass_through(#[case] template: &str, #[case] expected: &str) {
+        let path = Path::new("/t/a.txt");
+        expect_that!(expand(template, "a.txt", &ctx(path, "a.txt")), eq(expected));
+    }
+
+    #[gtest]
+    fn edge_widths_and_ranges_still_work() {
+        let path = Path::new("/t/a.txt");
+        let x = |t: &str| expand(t, "a.txt", &ctx(path, "a.txt"));
+        expect_that!(x("<name|pad:65535>").len(), eq(65535));
+        expect_that!(x("<rands:65535>").len(), eq(65535));
+        // The full i64 span used to overflow computing max - min + 1.
+        expect_that!(
+            x("<rand:-9223372036854775808:9223372036854775807>").parse::<i64>(),
+            ok(anything())
+        );
+        // A counter start past i64::MAX can't be shown; the tag passes through.
+        let big = Ctx {
+            num: usize::MAX,
+            ..ctx(path, "a.txt")
+        };
+        expect_that!(expand("<num>", "a.txt", &big), eq("<num>"));
     }
 
     #[rstest]
@@ -767,13 +921,13 @@ mod tests {
         assert_eq!(human_size(input), expected);
     }
 
-    #[test]
+    #[gtest]
     fn extracts_datetimes_from_text() {
         let (y, m, d, h, mi, s) = civil_utc(extract_datetime("IMG_20240501_123005.jpg").unwrap());
         assert_eq!((y, m, d, h, mi, s), (2024, 5, 1, 12, 30, 5));
         let (y, m, d, h, ..) = civil_utc(extract_datetime("trip 2024-05-01").unwrap());
         assert_eq!((y, m, d, h), (2024, 5, 1, 0));
-        assert!(extract_datetime("no date here 123").is_none());
+        expect_that!(extract_datetime("no date here 123"), none());
         assert!(
             extract_datetime("9999 99 99").is_none(),
             "month/day ranges checked"
@@ -809,7 +963,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[gtest]
     fn file_tags() {
         let dir = std::env::temp_dir().join(format!("iron_tags_{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
@@ -831,10 +985,10 @@ mod tests {
         );
         assert_eq!(expand("<size:h>", "data.bin", &c), "11 B");
         let modified = expand("<modified>", "data.bin", &c);
-        assert_eq!(modified.len(), 10, "yyyy-MM-dd: {modified}");
+        expect_that!(modified.len(), eq(10), "yyyy-MM-dd: {modified}");
         let r: i64 = expand("<rand:5:5>", "data.bin", &c).parse().unwrap();
         assert_eq!(r, 5);
-        assert_eq!(expand("<rands:6>", "data.bin", &c).len(), 6);
+        expect_that!(expand("<rands:6>", "data.bin", &c).len(), eq(6));
     }
 
     // -- mutation-testing gap fills (2026-08-30 baseline) --
@@ -999,12 +1153,12 @@ mod tests {
         assert!(seen_high, "never drew above 101 in 200 tries");
     }
 
-    #[test]
+    #[gtest]
     fn rands_is_not_a_constant_stream() {
         let path = Path::new("a.txt");
         let c = ctx(path, "a.txt");
         let s = expand("<rands:32>", "a.txt", &c);
-        assert_eq!(s.len(), 32);
+        expect_that!(s.len(), eq(32));
         // A stuck or saturating generator repeats one character forever.
         let distinct: std::collections::HashSet<char> = s.chars().collect();
         assert!(
@@ -1032,7 +1186,7 @@ mod tests {
         assert_eq!(expand(template, input, &c), expected);
     }
 
-    #[test]
+    #[gtest]
     fn metadata_aliases_read_values_and_fall_back() {
         let dir = scratch("meta");
         let p = dir.join("tiny.png");
@@ -1059,43 +1213,42 @@ mod tests {
             "lon",
         ] {
             let out = expand(&format!("<{tag}|fallback:none>"), "tiny.png", &c);
-            assert_eq!(out, "none", "<{tag}> did not resolve");
+            expect_that!(out, eq("none"), "<{tag}> did not resolve");
         }
     }
 
-    #[test]
-    fn datetime_extraction_validates_every_field() {
-        // A full stamp round-trips through the same civil-date maths.
-        let want = epoch_from_civil(2024, 5, 6, 7, 8, 9);
-        assert_eq!(extract_datetime("IMG_20240506_070809.jpg"), Some(want));
-        assert_eq!(extract_datetime("2024-05-06 07.08.09"), Some(want));
-        // Date only defaults the clock to midnight.
-        assert_eq!(
-            extract_datetime("scan_20240506.pdf"),
-            Some(epoch_from_civil(2024, 5, 6, 0, 0, 0))
-        );
-
-        // Every bound is inclusive on the low side and exclusive above it.
-        assert!(
-            extract_datetime("20241231_235959.jpg").is_some(),
-            "last legal"
-        );
-        assert!(
-            extract_datetime("20240101_000000.jpg").is_some(),
-            "first legal"
-        );
-        for bad in [
-            "20241301_000000.jpg", // month 13
-            "20240132_000000.jpg", // day 32
-            "20240506_240000.jpg", // hour 24
-            "20240506_006000.jpg", // minute 60
-            "20240506_000060.jpg", // second 60
-            "18991231_000000.jpg", // year below 1900
-            "30000101_000000.jpg", // year above 2999
-        ] {
-            assert_eq!(extract_datetime(bad), None, "{bad} should be rejected");
-        }
-        assert_eq!(extract_datetime("no digits here"), None);
+    #[rstest]
+    // A full stamp round-trips through the same civil-date maths.
+    #[case::full_stamp("IMG_20240506_070809.jpg", Some(epoch_from_civil(2024, 5, 6, 7, 8, 9)))]
+    #[case::separators("2024-05-06 07.08.09", Some(epoch_from_civil(2024, 5, 6, 7, 8, 9)))]
+    // Date only defaults the clock to midnight.
+    #[case::date_only("scan_20240506.pdf", Some(epoch_from_civil(2024, 5, 6, 0, 0, 0)))]
+    // Every bound is inclusive on the low side and exclusive above it.
+    #[case::last_legal(
+        "20241231_235959.jpg",
+        Some(epoch_from_civil(2024, 12, 31, 23, 59, 59))
+    )]
+    #[case::first_legal("20240101_000000.jpg", Some(epoch_from_civil(2024, 1, 1, 0, 0, 0)))]
+    #[case::month_13("20241301_000000.jpg", None)]
+    #[case::day_32("20240132_000000.jpg", None)]
+    #[case::hour_24("20240506_240000.jpg", None)]
+    #[case::minute_60("20240506_006000.jpg", None)]
+    #[case::second_60("20240506_000060.jpg", None)]
+    #[case::year_below_1900("18991231_000000.jpg", None)]
+    #[case::year_above_2999("30000101_000000.jpg", None)]
+    #[case::no_digits("no digits here", None)]
+    // Non-ASCII digits used to match Unicode \d and then panic in parse.
+    #[case::arabic_indic_digits(
+        "IMG_\u{0662}\u{0660}\u{0662}\u{0664}\u{0660}\u{0665}\u{0660}\u{0661}.jpg",
+        None
+    )]
+    #[case::ascii_after_other_digits(
+        "\u{0662}\u{0660}\u{0662}\u{0664} 20240501.jpg",
+        Some(epoch_from_civil(2024, 5, 1, 0, 0, 0))
+    )]
+    #[gtest]
+    fn datetime_extraction_validates_every_field(#[case] text: &str, #[case] want: Option<i64>) {
+        expect_that!(extract_datetime(text), eq(want));
     }
 
     #[test]

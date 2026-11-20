@@ -255,15 +255,10 @@ fn case_scoped(s: &str, mode: CaseMode, scope: &CaseScope) -> String {
         CaseScope::All => change_case(s, mode),
         CaseScope::Pos { start, len } => {
             let chars: Vec<char> = s.chars().collect();
-            if *start >= chars.len() {
-                return s.to_string();
-            }
-            let end = (start + len).min(chars.len());
-            let seg: String = chars[*start..end].iter().collect();
-            let (head, tail): (String, String) = (
-                chars[..*start].iter().collect(),
-                chars[end..].iter().collect(),
-            );
+            let (from, to) = crate::arith::char_window(*start, *len, chars.len());
+            let seg: String = chars[from..to].iter().collect();
+            let (head, tail): (String, String) =
+                (chars[..from].iter().collect(), chars[to..].iter().collect());
             format!("{head}{}{tail}", change_case(&seg, mode))
         }
         CaseScope::Match(re) => {
@@ -307,11 +302,8 @@ fn remove(s: &str, w: &RemoveWhat) -> String {
     match w {
         RemoveWhat::Range { start, len } => {
             let chars: Vec<char> = s.chars().collect();
-            if *start >= chars.len() {
-                return s.to_string();
-            }
-            let end = (start + len).min(chars.len());
-            chars[..*start].iter().chain(&chars[end..]).collect()
+            let (from, to) = crate::arith::char_window(*start, *len, chars.len());
+            chars[..from].iter().chain(&chars[to..]).collect()
         }
         RemoveWhat::Match(re) => re.replace_all(s, "").into_owned(),
         RemoveWhat::Chars(list) => s.chars().filter(|c| !list.contains(*c)).collect(),
@@ -377,7 +369,7 @@ fn trim(s: &str, chars: &str, at: TrimAt, invert: bool) -> String {
     }
 }
 
-fn renumber(s: &str, nth: usize, mode: &RenumMode, pad: usize, ctx: &Ctx) -> String {
+fn renumber(s: &str, nth: usize, mode: &RenumMode, pad: u16, ctx: &Ctx) -> String {
     let bytes = s.as_bytes();
     let mut runs: Vec<(usize, usize)> = Vec::new();
     let mut i = 0;
@@ -398,11 +390,16 @@ fn renumber(s: &str, nth: usize, mode: &RenumMode, pad: usize, ctx: &Ctx) -> Str
     let Ok(old) = s[a..b].parse::<i64>() else {
         return s.to_string();
     };
+    // Clamped at 0; past i64::MAX the name is left alone (verified in arith.rs).
     let new = match mode {
-        RenumMode::Delta(d) => old + d,
-        RenumMode::Sequence { start, step } => start + step * ctx.index as i64,
-    }
-    .max(0);
-    let width = if pad == 0 { b - a } else { pad };
+        RenumMode::Delta(d) => crate::arith::counter_value(old, *d, 1),
+        RenumMode::Sequence { start, step } => {
+            crate::arith::counter_value(*start, *step, ctx.index)
+        }
+    };
+    let Some(new) = new else {
+        return s.to_string();
+    };
+    let width = if pad == 0 { b - a } else { usize::from(pad) };
     format!("{}{new:0width$}{}", &s[..a], &s[b..])
 }

@@ -750,6 +750,7 @@ pub(super) fn wire(ui: &MainWindow, state: &Rc<RefCell<State>>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use googletest::prelude::*;
 
     // mode_blocked guards the file-picking callbacks, which open a native
     // dialog once they get past it, so it is exercised directly here rather
@@ -816,7 +817,7 @@ mod tests {
         assert_eq!(ui.get_selection_count(), 0);
     }
 
-    #[test]
+    #[gtest]
     fn applying_a_preset_loads_rules_settings_and_clears_the_edit_cursor() {
         let ui = ui();
         let state = Rc::new(RefCell::new(State::default()));
@@ -835,7 +836,7 @@ mod tests {
         .unwrap();
         apply_preset(&ui, &state, &p);
 
-        assert_eq!(state.borrow().rules.len(), 1);
+        expect_that!(state.borrow().rules, len(eq(1)));
         assert_eq!(ui.get_start_text(), "5");
         assert_eq!(ui.get_collide(), "number");
         // Defaults fill in for settings the preset does not carry.
@@ -844,7 +845,7 @@ mod tests {
         assert_eq!(ui.get_editing_rule(), -1);
         assert_eq!(state.borrow().editing, None);
         // All rules were valid, so the status must not claim otherwise.
-        assert!(ui.get_status_text().contains("loaded 1 rule(s)"));
+        expect_that!(ui.get_status_text(), contains_substring("loaded 1 rule(s)"));
         assert!(
             !ui.get_status_text().contains("invalid"),
             "{}",

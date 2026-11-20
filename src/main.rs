@@ -1,6 +1,7 @@
 // iron_renamer — batch file renamer.
 // No arguments: launch the GUI. With arguments: CLI (see cli.rs / --help).
 
+mod arith;
 mod batch;
 mod cli;
 #[cfg(test)]
@@ -9,6 +10,7 @@ mod engine;
 mod gui;
 mod meta;
 mod presets;
+mod syntax;
 mod tags;
 
 fn main() {

@@ -117,7 +117,7 @@ struct Cli {
     #[arg(long, value_name = "N", help = "Counter start (default: 1)")]
     start: Option<usize>,
     #[arg(long, value_name = "N", help = "Zero-pad width (default: automatic)")]
-    pad: Option<usize>,
+    pad: Option<u16>,
     #[arg(
         long,
         value_name = "DEST",
@@ -259,7 +259,7 @@ pub fn run(args: Vec<String>) {
 
     let mut rules: Vec<RuleEntry> = Vec::new();
     let mut start: usize = 1;
-    let mut pad: usize = 0;
+    let mut pad: u16 = 0;
     let mut mode = batch::Mode::Rename;
     let mut dest = String::new();
     let mut collision = batch::Collision::Fail;
@@ -430,7 +430,7 @@ pub fn run(args: Vec<String>) {
     files.retain(|f| seen.insert(f.clone()));
 
     if pad == 0 {
-        pad = (start + files.len() - 1).to_string().len();
+        pad = batch::auto_pad(start, files.len());
     }
 
     let csv_rows: Vec<Vec<String>> = match &cli.csv {
@@ -766,6 +766,7 @@ fn die(msg: &str) -> ! {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use googletest::prelude::*;
     use rstest::rstest;
 
     #[test]
@@ -803,8 +804,9 @@ mod tests {
     #[case::invalid_sort(&["iron_renamer", "--sort", "random"])]
     #[case::conflicting_destinations(&["iron_renamer", "--copy-to", "a", "--move-to", "b"])]
     #[case::invalid_batch_id(&["iron_renamer", "undo", "not-a-number"])]
+    #[gtest]
     fn clap_rejects_invalid_and_conflicting_options(#[case] args: &[&str]) {
-        assert!(Cli::command().try_get_matches_from(args).is_err());
+        expect_that!(Cli::command().try_get_matches_from(args), err(anything()));
     }
 
     #[test]

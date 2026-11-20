@@ -16,10 +16,11 @@ pub(super) struct Computed {
 
 pub(super) fn compute(ui: &MainWindow, s: &State) -> Computed {
     let start: usize = ui.get_start_text().parse().unwrap_or(1);
-    let pad: usize = ui
+    // Blank, garbage or wider than u16 falls back to automatic.
+    let pad: u16 = ui
         .get_pad_text()
         .parse()
-        .unwrap_or_else(|_| (start + s.files.len().max(1) - 1).to_string().len());
+        .unwrap_or_else(|_| crate::batch::auto_pad(start, s.files.len()));
     let rules: Vec<RuleEntry> = s.rules.iter().filter_map(|r| r.build().ok()).collect();
     let mode = match ui.get_batch_mode().as_str() {
         "copy" => Mode::Copy,

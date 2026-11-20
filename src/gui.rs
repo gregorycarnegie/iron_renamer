@@ -227,6 +227,7 @@ pub fn run(initial: Vec<PathBuf>) -> Result<(), slint::PlatformError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use googletest::prelude::*;
     use slint::Model;
 
     // The winit bits in `run` (backend selector, window drag/resize) can't work
@@ -312,6 +313,28 @@ mod tests {
         assert_eq!(ui.get_files().iter().next().unwrap().new_name, "02.txt");
     }
 
+    #[gtest]
+    fn out_of_range_pad_and_start_fall_back_instead_of_crashing() {
+        let (ui, state) = seeded(&["/t/a.txt"]);
+        ui.set_new_kind("pattern".into());
+        ui.set_field_a("<num>.<ext>".into());
+        ui.invoke_add_rule();
+        // Wider than the formatter allows: treated like garbage, i.e. automatic.
+        ui.set_pad_text("65536".into());
+        ui.invoke_settings_changed();
+        preview::refresh(&ui, &state.borrow());
+        expect_that!(ui.get_files().iter().next().unwrap().new_name, eq("1.txt"));
+        // A start past i64::MAX leaves <num> unexpanded rather than wrapping.
+        ui.set_pad_text("".into());
+        ui.set_start_text("18446744073709551615".into());
+        ui.invoke_settings_changed();
+        preview::refresh(&ui, &state.borrow());
+        expect_that!(
+            ui.get_files().iter().next().unwrap().new_name,
+            eq("<num>.txt")
+        );
+    }
+
     #[test]
     fn pad_width_uses_the_sum_of_start_and_count() {
         let many: Vec<String> = (1..=40).map(|i| format!("/t/f{i:02}.txt")).collect();
@@ -324,7 +347,7 @@ mod tests {
         assert_eq!(ui.get_files().iter().next().unwrap().new_name, "03.txt");
     }
 
-    #[test]
+    #[gtest]
     fn copy_and_move_modes_use_the_destination_rename_ignores_it() {
         let (ui, state) = seeded(&["/t/a.txt"]);
         ui.set_dest_text("/dest".into());
@@ -339,7 +362,7 @@ mod tests {
             ui.set_batch_mode(mode.into());
             preview::refresh(&ui, &state.borrow());
             let shown = ui.get_files().iter().next().unwrap().new_name.to_string();
-            assert!(shown.contains("dest"), "{mode} showed {shown}");
+            expect_that!(shown, contains_substring("dest"), "{mode} showed {shown}");
             assert!(shown.ends_with("A.TXT"), "{mode} showed {shown}");
         }
     }

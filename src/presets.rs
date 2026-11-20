@@ -131,8 +131,10 @@ pub fn csv_split(line: &str) -> Vec<String> {
     out
 }
 
+/// Quotes when a separator, quote, or line break (CR included, which RFC 4180
+/// readers treat as a row end) would otherwise split the field.
 pub fn csv_field(s: &str) -> String {
-    if s.contains([',', '"', '\n']) {
+    if crate::syntax::csv_needs_quotes(s.as_bytes()) {
         format!("\"{}\"", s.replace('"', "\"\""))
     } else {
         s.to_string()
@@ -160,6 +162,7 @@ pub fn json_str(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use googletest::prelude::*;
     use proptest::prelude::*;
     use rstest::rstest;
 
@@ -172,6 +175,37 @@ mod tests {
         #[test]
         fn csv_single_field_roundtrips(s in any::<String>()) {
             prop_assert_eq!(csv_split(&csv_field(&s)), vec![s]);
+        }
+
+        #[test]
+        fn csv_quoting_kernel_flags_exactly_the_breaking_characters(s in any::<String>()) {
+            prop_assert_eq!(
+                crate::syntax::csv_needs_quotes(s.as_bytes()),
+                s.contains([',', '"', '\n', '\r'])
+            );
+        }
+
+        #[test]
+        fn csv_rows_roundtrip(fields in prop::collection::vec(any::<String>(), 1..6)) {
+            let line = fields.iter().map(|f| csv_field(f)).collect::<Vec<_>>().join(",");
+            prop_assert_eq!(csv_split(&line), fields);
+        }
+
+        #[test]
+        fn presets_roundtrip_through_a_file(
+            settings in prop::collection::hash_map("[a-z_]{1,8}", "[^\r]*", 0..4),
+            rules in prop::collection::vec(
+                ("[a-z]{1,8}", "[a-z0-9:]{0,8}", "[^\r]*", "[^\r]*"),
+                0..4,
+            ),
+        ) {
+            let path = std::env::temp_dir()
+                .join(format!("iron_preset_prop_{}", std::process::id()))
+                .join("p.preset");
+            save(&path, &Preset { settings: settings.clone(), rules: rules.clone() }).unwrap();
+            let back = load(&path).unwrap();
+            prop_assert_eq!(back.settings, settings);
+            prop_assert_eq!(back.rules, rules);
         }
 
         #[test]
@@ -227,17 +261,21 @@ mod tests {
     #[case::plain("plain.txt", "plain.txt")]
     #[case::comma("a,b", "\"a,b\"")]
     #[case::quote("q\"t", "\"q\"\"t\"")]
+    #[case::newline("a\nb", "\"a\nb\"")]
+    #[case::carriage_return("a\rb", "\"a\rb\"")]
+    #[case::empty("", "")]
+    #[case::spaces_stay_bare(" a b ", " a b ")]
     fn csv_field_escapes_special_characters(#[case] input: &str, #[case] expected: &str) {
         assert_eq!(csv_field(input), expected);
     }
 
     // ── mutation-testing gap fills (2026-08-30 baseline) ──
 
-    #[test]
+    #[gtest]
     fn the_preset_folder_is_a_real_location_under_the_data_dir() {
         let d = data_dir();
         assert!(d.as_os_str().len() > 1, "data_dir collapsed to {d:?}");
-        assert!(d.file_name().is_some(), "{d:?}");
+        expect_that!(d.file_name(), some(anything()), "{d:?}");
         // dir() is data_dir()/presets, not a bare or empty path.
         let p = dir();
         assert!(p.starts_with(&d), "{p:?} not under {d:?}");

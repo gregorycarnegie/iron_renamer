@@ -7,7 +7,7 @@ use std::{
     path::PathBuf,
 };
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(super) struct RuleSpec {
     pub(super) kind: String,
     pub(super) a: String,
@@ -172,8 +172,59 @@ pub(super) fn specs_from_preset(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use googletest::prelude::*;
+    use proptest::prelude::*;
     use rstest::rstest;
     use std::fs;
+
+    #[derive(Clone, Debug)]
+    enum RuleOp {
+        Edit(usize),
+        Remove(usize),
+        Move(usize, isize),
+    }
+
+    proptest! {
+        // Model-based: rules carry unique labels, so whichever rule the edit
+        // cursor is on can be tracked by identity through any sequence of
+        // removes and moves, including out-of-range ones.
+        #[test]
+        fn the_edit_cursor_follows_its_rule_through_any_edits(
+            n in 0usize..6,
+            ops in prop::collection::vec(
+                prop_oneof![
+                    (0usize..8).prop_map(RuleOp::Edit),
+                    (0usize..8).prop_map(RuleOp::Remove),
+                    (0usize..8, -2isize..8).prop_map(|(a, b)| RuleOp::Move(a, b)),
+                ],
+                0..20,
+            ),
+        ) {
+            let mut s = State {
+                rules: (0..n).map(|i| spec("replace", &i.to_string(), "")).collect(),
+                ..State::default()
+            };
+            let mut edited: Option<String> = None; // label of the edited rule
+            for op in ops {
+                match op {
+                    RuleOp::Edit(i) if i < s.rules.len() => {
+                        s.editing = Some(i);
+                        edited = Some(s.rules[i].a.clone());
+                    }
+                    RuleOp::Edit(_) => {}
+                    RuleOp::Remove(i) => {
+                        if s.rules.get(i).map(|r| &r.a) == edited.as_ref() {
+                            edited = None;
+                        }
+                        remove_rule(&mut s, i);
+                    }
+                    RuleOp::Move(a, b) => move_rule(&mut s, a, b),
+                }
+                let at_cursor = s.editing.map(|e| s.rules[e].a.clone());
+                prop_assert_eq!(&at_cursor, &edited);
+            }
+        }
+    }
 
     #[test]
     fn gui_state_adds_naturally_sorted_unique_files() {
@@ -193,7 +244,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[gtest]
     fn gui_rule_spec_builds_cli_compatible_modifiers() {
         let spec = RuleSpec {
             kind: "replace".into(),
@@ -201,7 +252,7 @@ mod tests {
             b: "new".into(),
             mods: "name:ci:first".into(),
         };
-        assert!(spec.build().is_ok());
+        expect_that!(spec.build(), ok(anything()));
         assert_eq!(spec.summary(), "\"old\" → \"new\" [name:ci:first]");
     }
 
@@ -255,7 +306,7 @@ mod tests {
         assert_eq!(specs[0].kind, "replace");
     }
 
-    #[test]
+    #[gtest]
     fn retarget_follows_renames_and_drops_consumed_overrides() {
         let mut state = State {
             files: vec!["a.txt".into(), "b.txt".into()],
@@ -270,7 +321,7 @@ mod tests {
             }],
         );
         assert_eq!(state.files, ["z.txt", "b.txt"].map(PathBuf::from));
-        assert!(state.overrides.is_empty());
+        expect_that!(state.overrides, is_empty());
     }
 
     #[test]
@@ -326,7 +377,7 @@ mod tests {
         assert_eq!(rule.summary(), expected);
     }
 
-    #[test]
+    #[gtest]
     fn removing_a_rule_keeps_the_edit_cursor_on_the_same_rule() {
         let mut s = State {
             rules: (0..4)
@@ -352,7 +403,7 @@ mod tests {
         // Out of range is a no-op.
         let before = s.rules.len();
         remove_rule(&mut s, before);
-        assert_eq!(s.rules.len(), before);
+        expect_that!(s.rules, len(eq(before)));
     }
 
     #[test]

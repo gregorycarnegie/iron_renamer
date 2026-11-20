@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc c0fba524a6803c7eb10ef6c3e8bc74e6fad730605c5341ea26e766283fd7bce8 # shrinks to kind = "renumber", mods = [], a = "+1", b = "9223372036854775807", name = "0", index = 1
+cc bef3d15170e84f079654e1b4683972d0bb0ae7727c00caca043ae009fe9ac41e # shrinks to s = "  𐒰", start = 1, len = 18446744073709551615

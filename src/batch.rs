@@ -68,7 +68,7 @@ impl Collision {
 pub struct BatchCfg<'a> {
     pub rules: &'a [RuleEntry],
     pub start: usize,
-    pub pad: usize,
+    pub pad: u16,
     pub overrides: &'a HashMap<PathBuf, String>,
     pub mode: Mode,
     /// Destination folder template for Copy/Move; tags expand per file.
@@ -82,12 +82,19 @@ pub struct BatchCfg<'a> {
     pub csv: &'a [Vec<String>],
 }
 
+/// Automatic zero-pad width: the digit count of the last counter value.
+/// Saturating is exact here: any true sum of two usizes is below 10^20,
+/// so it has the same 20 digits as usize::MAX.
+pub fn auto_pad(start: usize, count: usize) -> u16 {
+    start.saturating_add(count.max(1) - 1).to_string().len() as u16
+}
+
 impl<'a> BatchCfg<'a> {
     #[cfg(test)] // frontends fill the full struct; tests want plain renames
     pub fn rename(
         rules: &'a [RuleEntry],
         start: usize,
-        pad: usize,
+        pad: u16,
         overrides: &'a HashMap<PathBuf, String>,
     ) -> Self {
         BatchCfg {
@@ -104,6 +111,7 @@ impl<'a> BatchCfg<'a> {
     }
 }
 
+#[derive(Debug)]
 pub struct PlanItem {
     pub from: PathBuf,
     pub new_name: String,
@@ -195,7 +203,7 @@ pub fn plan(files: &[PathBuf], cfg: &BatchCfg) -> Vec<PlanItem> {
             .or_insert(1);
         let ctx = Ctx {
             index: i,
-            num: cfg.start + i,
+            num: cfg.start.saturating_add(i),
             pad: cfg.pad,
             folder_num,
             total: files.len(),
@@ -264,7 +272,7 @@ pub fn plan(files: &[PathBuf], cfg: &BatchCfg) -> Vec<PlanItem> {
         let original = name_of(f);
         let ctx = Ctx {
             index: i,
-            num: cfg.start + i,
+            num: cfg.start.saturating_add(i),
             pad: cfg.pad,
             folder_num: folder_nums[i],
             total: files.len(),

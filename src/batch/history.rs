@@ -228,6 +228,7 @@ pub(super) fn date_str(id_millis: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use googletest::prelude::*;
     use rstest::rstest;
 
     #[test]
@@ -261,11 +262,11 @@ mod tests {
 
     // ── mutation-testing gap fills (2026-08-30 baseline) ──
 
-    #[test]
+    #[gtest]
     fn hex_round_trips_every_byte() {
         let all: Vec<u8> = (0..=255u8).collect();
         let encoded = hex(&all);
-        assert_eq!(encoded.len(), 512);
+        expect_that!(encoded.len(), eq(512));
         assert!(encoded.starts_with("000102"), "{}", &encoded[..6]);
         assert!(encoded.ends_with("fdfeff"));
         assert_eq!(unhex(&encoded).unwrap(), all);

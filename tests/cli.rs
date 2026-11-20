@@ -1,6 +1,7 @@
 // Integration tests: drive the real binary end to end. LOCALAPPDATA/HOME
 // point at the test dir so batch history never touches the user's own.
 
+use googletest::prelude::*;
 use rstest::rstest;
 use std::{
     fs,
@@ -30,7 +31,7 @@ fn run(dir: &Path, args: &[&str]) -> (String, String, bool) {
     )
 }
 
-#[test]
+#[gtest]
 fn preview_apply_history_undo() {
     let d = tmpdir("flow");
     fs::write(d.join("img 1.txt"), "one").unwrap();
@@ -39,8 +40,8 @@ fn preview_apply_history_undo() {
     // Preview (glob expanded by the binary, not a shell): nothing on disk moves.
     let (out, _, ok) = run(&d, &["-r", " ", "_", "*.txt"]);
     assert!(ok, "{out}");
-    assert!(out.contains("preview only"), "{out}");
-    assert!(out.contains("img_1.txt"), "{out}");
+    expect_that!(out, contains_substring("preview only"));
+    expect_that!(out, contains_substring("img_1.txt"));
     assert!(d.join("img 1.txt").exists());
 
     // Apply renames both files and records the batch.
@@ -51,16 +52,16 @@ fn preview_apply_history_undo() {
 
     let (out, _, ok) = run(&d, &["history"]);
     assert!(ok, "{out}");
-    assert!(out.contains("ITEMS"), "{out}");
+    expect_that!(out, contains_substring("ITEMS"));
 
     // Undo restores the original names and empties the history.
     let (out, _, ok) = run(&d, &["undo"]);
     assert!(ok, "{out}");
-    assert!(out.contains("reverted 2 item(s)"), "{out}");
+    expect_that!(out, contains_substring("reverted 2 item(s)"));
     assert_eq!(fs::read_to_string(d.join("img 1.txt")).unwrap(), "one");
     let (out, _, ok) = run(&d, &["history"]);
     assert!(ok);
-    assert!(out.contains("no batch history"), "{out}");
+    expect_that!(out, contains_substring("no batch history"));
 }
 
 #[rstest]
@@ -68,6 +69,8 @@ fn preview_apply_history_undo() {
 #[case::no_files("no_files", &["-c", "upper", "nothing*.xyz"], "no files matched")]
 #[case::conflict("conflict", &["-p", "same.txt", "a.txt", "b.txt", "-x"], "conflict")]
 #[case::empty_history("empty_history", &["undo"], "no batch history")]
+// Formatter widths panic past u16::MAX, so clap refuses wider pads up front.
+#[case::pad_too_wide("pad_too_wide", &["-p", "<num>", "--pad", "65536", "a.txt"], "65536")]
 fn errors_exit_nonzero(#[case] label: &str, #[case] args: &[&str], #[case] expected: &str) {
     let d = tmpdir(&format!("errors_{label}"));
     fs::write(d.join("a.txt"), "").unwrap();
@@ -79,7 +82,23 @@ fn errors_exit_nonzero(#[case] label: &str, #[case] args: &[&str], #[case] expec
     assert!(d.join("a.txt").exists() && d.join("b.txt").exists());
 }
 
-#[test]
+// A start near usize::MAX used to overflow computing the pad width and the
+// counter; <num> past i64::MAX now passes through like any bad argument.
+#[gtest]
+fn extreme_start_and_pad_do_not_crash() {
+    let d = tmpdir("extremes");
+    fs::write(d.join("a.txt"), "").unwrap();
+    for args in [
+        &["-p", "n<num>", "--start", "18446744073709551615", "a.txt"][..],
+        &["-p", "n<num>", "--start", "9223372036854775807", "a.txt"][..],
+        &["-p", "<num>", "--pad", "65535", "a.txt"][..],
+    ] {
+        let (out, err, _) = run(&d, args);
+        expect_that!(err, not(contains_substring("panicked")), "{args:?}\n{out}");
+    }
+}
+
+#[gtest]
 fn preset_and_export() {
     let d = tmpdir("preset");
     fs::write(d.join("a.jpg"), "").unwrap();
@@ -101,16 +120,16 @@ fn preset_and_export() {
         ],
     );
     assert!(ok, "{out}");
-    assert!(out.contains("pic_5.jpg"), "preset start honored: {out}");
+    expect_that!(out, contains_substring("pic_5.jpg"), "preset start honored");
     let csv = fs::read_to_string(d.join("preview.csv")).unwrap();
-    assert!(csv.contains("pic_6.jpg"), "{csv}");
+    expect_that!(csv, contains_substring("pic_6.jpg"));
     // preview only: nothing renamed
     assert!(d.join("a.jpg").exists());
 }
 
 // ── mutation-testing gap fills (2026-08-30 baseline) ──
 
-#[test]
+#[gtest]
 fn input_sources_in_list_and_recursion() {
     let d = tmpdir("inputs");
     let sub = d.join("sub");
@@ -123,26 +142,40 @@ fn input_sources_in_list_and_recursion() {
     // --in takes a whole folder, without recursing by default.
     let (out, _, ok) = run(&d, &["--in", ".", "-c", "upper"]);
     assert!(ok, "{out}");
-    assert!(out.contains("A.JPG") && out.contains("B.PNG"), "{out}");
-    assert!(!out.contains("DEEP.JPG"), "no recursion by default: {out}");
+    expect_that!(
+        out,
+        all!(contains_substring("A.JPG"), contains_substring("B.PNG"))
+    );
+    expect_that!(
+        out,
+        not(contains_substring("DEEP.JPG")),
+        "no recursion by default"
+    );
 
     // --recurse reaches the subfolder.
     let (out, _, ok) = run(&d, &["--in", ".", "--recurse", "-c", "upper"]);
     assert!(ok, "{out}");
-    assert!(out.contains("DEEP.JPG"), "{out}");
+    expect_that!(out, contains_substring("DEEP.JPG"));
 
     // --mask filters includes and excludes.
     let (out, _, ok) = run(&d, &["--in", ".", "--mask", "*.jpg;!thumb*", "-c", "upper"]);
     assert!(ok, "{out}");
-    assert!(out.contains("A.JPG"), "{out}");
-    assert!(!out.contains("B.PNG"), "excluded by mask: {out}");
-    assert!(!out.contains("THUMB.JPG"), "excluded by !thumb*: {out}");
+    expect_that!(out, contains_substring("A.JPG"));
+    expect_that!(out, not(contains_substring("B.PNG")), "excluded by mask");
+    expect_that!(
+        out,
+        not(contains_substring("THUMB.JPG")),
+        "excluded by !thumb*"
+    );
 
     // --list reads paths from a file, one per line.
     fs::write(d.join("files.txt"), "a.jpg\nb.png\n").unwrap();
     let (out, _, ok) = run(&d, &["--list", "files.txt", "-c", "upper"]);
     assert!(ok, "{out}");
-    assert!(out.contains("A.JPG") && out.contains("B.PNG"), "{out}");
+    expect_that!(
+        out,
+        all!(contains_substring("A.JPG"), contains_substring("B.PNG"))
+    );
 }
 
 #[test]
@@ -177,7 +210,7 @@ fn sort_order_drives_the_counter() {
     assert!(desc[0].starts_with("c.txt"), "{desc:?}");
 }
 
-#[test]
+#[gtest]
 fn collision_policies_from_the_command_line() {
     let d = tmpdir("collide");
     fs::write(d.join("a.txt"), "").unwrap();
@@ -190,17 +223,17 @@ fn collision_policies_from_the_command_line() {
     // number and letter each resolve it, differently.
     let (out, _, ok) = run(&d, &["-p", "same.<ext>", "--collide", "number", "*.txt"]);
     assert!(ok, "{out}");
-    assert!(out.contains("same (2).txt"), "{out}");
+    expect_that!(out, contains_substring("same (2).txt"));
 
     let (out, _, ok) = run(&d, &["-p", "same.<ext>", "--collide", "letter", "*.txt"]);
     assert!(ok, "{out}");
-    assert!(out.contains("same_b.txt"), "{out}");
+    expect_that!(out, contains_substring("same_b.txt"));
 
     // Anything else is treated as a tag pattern for the suffix. (A value
     // starting with '-' would be parsed as a flag, so it needs a leading char.)
     let (out, _, ok) = run(&d, &["-p", "same.<ext>", "--collide", "_v<index>", "*.txt"]);
     assert!(ok, "{out}");
-    assert!(out.contains("same_v2.txt"), "{out}");
+    expect_that!(out, contains_substring("same_v2.txt"));
 }
 
 #[test]
@@ -246,7 +279,7 @@ fn folder_mode_renames_directories_not_files() {
     assert!(names.contains(&"loose.txt".to_string()), "{names:?}");
 }
 
-#[test]
+#[gtest]
 fn conditions_gate_the_rule_before_them() {
     let d = tmpdir("cond");
     fs::write(d.join("keep.jpg"), "").unwrap();
@@ -254,8 +287,12 @@ fn conditions_gate_the_rule_before_them() {
 
     let (out, err, ok) = run(&d, &["-c", "upper", "--if", "ext:eq", "jpg", "*.*"]);
     assert!(ok, "{err}{out}");
-    assert!(out.contains("KEEP.JPG"), "{out}");
-    assert!(!out.contains("SKIP.TXT"), "condition did not gate: {out}");
+    expect_that!(out, contains_substring("KEEP.JPG"));
+    expect_that!(
+        out,
+        not(contains_substring("SKIP.TXT")),
+        "condition did not gate"
+    );
 }
 
 #[test]
@@ -283,14 +320,14 @@ fn name_and_pair_lists_come_from_files() {
     );
 }
 
-#[test]
+#[gtest]
 fn javascript_rules_run_sandboxed() {
     let d = tmpdir("js");
     fs::write(d.join("a b.txt"), "").unwrap();
     // `name` is the whole file name, `stem` the part before the extension.
     let (out, err, ok) = run(&d, &["--js", "stem.toUpperCase() + \".\" + ext", "a b.txt"]);
     assert!(ok, "{err}{out}");
-    assert!(out.contains("A B.txt"), "{out}");
+    expect_that!(out, contains_substring("A B.txt"));
 
     // No file or network access is exposed: the usual escape hatches are not
     // merely blocked, they are absent, so a script cannot reach the host.
@@ -303,7 +340,7 @@ fn javascript_rules_run_sandboxed() {
         ],
     );
     assert!(ok, "{err}{out}");
-    assert!(out.contains("undefined_undefined_undefined"), "{out}");
+    expect_that!(out, contains_substring("undefined_undefined_undefined"));
 }
 
 #[test]
@@ -331,7 +368,7 @@ fn csv_rows_feed_the_csv_tag() {
     );
 }
 
-#[test]
+#[gtest]
 fn timestamps_and_metadata_are_written_after_the_batch() {
     let d = tmpdir("meta");
     fs::write(d.join("song.wav"), "").unwrap();
@@ -352,7 +389,7 @@ fn timestamps_and_metadata_are_written_after_the_batch() {
     assert!(ok, "{err}{out}");
     let (out, err, ok) = run(&d, &["-p", "<modified:yyyy-MM-dd>.<ext>", "a.txt"]);
     assert!(ok, "{err}{out}");
-    assert!(out.contains("2001-05-06.txt"), "{out}");
+    expect_that!(out, contains_substring("2001-05-06.txt"));
 
     // An unknown timestamp field is rejected at parse time.
     let (_, err, ok) = run(&d, &["--touch", "invented=2001-05-06 07:08", "a.txt", "-x"]);
@@ -364,12 +401,12 @@ fn timestamps_and_metadata_are_written_after_the_batch() {
         &d,
         &["--set-meta", "bogus=1", "-c", "lower", "song.wav", "-x"],
     );
-    assert!(err.contains("METADATA FAILED"), "{err}");
+    expect_that!(err, contains_substring("METADATA FAILED"));
     assert!(ok, "the batch itself succeeded");
     assert!(d.join("song.wav").exists());
 }
 
-#[test]
+#[gtest]
 fn undo_targets_a_specific_batch_by_id() {
     let d = tmpdir("undoid");
     fs::write(d.join("a.txt"), "one").unwrap();
@@ -389,7 +426,7 @@ fn undo_targets_a_specific_batch_by_id() {
         .filter_map(|l| l.split_whitespace().next())
         .filter(|w| w.chars().all(|c| c.is_ascii_digit()) && !w.is_empty())
         .collect();
-    assert_eq!(ids.len(), 2, "{hist}");
+    expect_that!(ids, len(eq(2)), "{hist}");
 
     // Undoing the older batch by id leaves the newer one applied.
     let (out, err, ok) = run(&d, &["undo", ids[1]]);
@@ -435,7 +472,7 @@ fn a_preset_can_carry_mode_destination_and_collision_policy() {
     assert!(!d.join("a.txt").exists(), "move left the source behind");
 }
 
-#[test]
+#[gtest]
 fn automatic_pad_width_covers_start_through_the_last_index() {
     let d = tmpdir("padwidth");
     for i in 1..=9 {
@@ -444,20 +481,20 @@ fn automatic_pad_width_covers_start_through_the_last_index() {
     // 1 + 9 - 1 = 9: one digit, so no padding at all.
     let (out, err, ok) = run(&d, &["-p", "<num>.<ext>", "*.txt"]);
     assert!(ok, "{err}{out}");
-    assert!(out.contains("  ->  1.txt"), "{out}");
+    expect_that!(out, contains_substring("  ->  1.txt"));
 
     // Starting at 2 pushes the last index to 10 and widens every name.
     let (out, err, ok) = run(&d, &["-p", "<num>.<ext>", "--start", "2", "*.txt"]);
     assert!(ok, "{err}{out}");
-    assert!(out.contains("  ->  02.txt"), "{out}");
+    expect_that!(out, contains_substring("  ->  02.txt"));
 
     // An explicit --pad wins over the computed width.
     let (out, err, ok) = run(&d, &["-p", "<num>.<ext>", "--pad", "4", "*.txt"]);
     assert!(ok, "{err}{out}");
-    assert!(out.contains("  ->  0001.txt"), "{out}");
+    expect_that!(out, contains_substring("  ->  0001.txt"));
 }
 
-#[test]
+#[gtest]
 fn preview_shows_bare_names_for_renames_and_paths_for_copies() {
     let d = tmpdir("shown");
     fs::write(d.join("a.txt"), "").unwrap();
@@ -465,16 +502,16 @@ fn preview_shows_bare_names_for_renames_and_paths_for_copies() {
     // A plain rename has nowhere to go, so only the new name is shown.
     let (out, err, ok) = run(&d, &["-c", "upper", "a.txt"]);
     assert!(ok, "{err}{out}");
-    assert!(out.contains("  ->  A.TXT"), "{out}");
+    expect_that!(out, contains_substring("  ->  A.TXT"));
 
     // A copy names the destination, so the preview has to show the path.
     let (out, err, ok) = run(&d, &["--copy-to", "out", "-c", "upper", "a.txt"]);
     assert!(ok, "{err}{out}");
-    assert!(out.contains("out"), "{out}");
-    assert!(out.contains("A.TXT"), "{out}");
+    expect_that!(out, contains_substring("out"));
+    expect_that!(out, contains_substring("A.TXT"));
 }
 
-#[test]
+#[gtest]
 fn summary_lines_report_conflicts_and_the_undo_hint() {
     let d = tmpdir("summary");
     fs::write(d.join("a.txt"), "").unwrap();
@@ -484,7 +521,7 @@ fn summary_lines_report_conflicts_and_the_undo_hint() {
     // rather than being silently dropped or silently applied.
     let (out, _, ok) = run(&d, &["-p", "same.<ext>", "*.txt"]);
     assert!(ok, "{out}");
-    assert!(out.contains("duplicate target"), "{out}");
+    expect_that!(out, contains_substring("duplicate target"));
     assert!(
         out.contains("rename 1 item(s)"),
         "only the clean row counts: {out}"
@@ -493,16 +530,20 @@ fn summary_lines_report_conflicts_and_the_undo_hint() {
     // A successful rename reports how many moved and how to undo it.
     let (out, err, ok) = run(&d, &["-c", "upper", "a.txt", "-x"]);
     assert!(ok, "{err}{out}");
-    assert!(out.contains("of 1 item(s)"), "{out}");
-    assert!(out.contains("undo"), "rename should offer undo: {out}");
+    expect_that!(out, contains_substring("of 1 item(s)"));
+    expect_that!(out, contains_substring("undo"), "rename should offer undo");
 
     // A copy creates nothing to undo, so it must not offer it.
     let (out, err, ok) = run(&d, &["--copy-to", "out", "-c", "lower", "b.txt", "-x"]);
     assert!(ok, "{err}{out}");
-    assert!(!out.contains("undo"), "copy should not offer undo: {out}");
+    expect_that!(
+        out,
+        not(contains_substring("undo")),
+        "copy should not offer undo"
+    );
 }
 
-#[test]
+#[gtest]
 fn metadata_only_runs_need_no_rules() {
     let d = tmpdir("metaonly");
     fs::write(d.join("a.txt"), "").unwrap();
@@ -511,22 +552,30 @@ fn metadata_only_runs_need_no_rules() {
     assert!(ok, "{err}{out}");
     let (out, err, ok) = run(&d, &["-p", "<modified:yyyy>.<ext>", "a.txt"]);
     assert!(ok, "{err}{out}");
-    assert!(out.contains("2001.txt"), "{out}");
+    expect_that!(out, contains_substring("2001.txt"));
 }
 
-#[test]
+#[gtest]
 fn a_run_that_changes_nothing_prints_no_summary() {
     let d = tmpdir("noop");
     fs::write(d.join("ALREADY.TXT"), "").unwrap();
     // Upper-casing an already-upper-case name plans zero renames.
     let (out, err, ok) = run(&d, &["-c", "upper", "ALREADY.TXT", "-x"]);
     assert!(ok, "{err}{out}");
-    assert!(out.contains("nothing to rename"), "{out}");
+    expect_that!(out, contains_substring("nothing to rename"));
     // None of the after-the-fact lines belong on a batch that did nothing.
-    assert!(!out.contains("item(s)\n"), "summary line printed: {out}");
-    assert!(!out.contains("undo"), "undo hint printed: {out}");
-    assert!(!out.contains("conflict"), "conflict line printed: {out}");
+    expect_that!(
+        out,
+        not(contains_substring("item(s)\n")),
+        "summary line printed"
+    );
+    expect_that!(out, not(contains_substring("undo")), "undo hint printed");
+    expect_that!(
+        out,
+        not(contains_substring("conflict")),
+        "conflict line printed"
+    );
     // And nothing was recorded to undo.
     let (hist, _, _) = run(&d, &["history"]);
-    assert!(hist.contains("no batch history"), "{hist}");
+    expect_that!(hist, contains_substring("no batch history"));
 }

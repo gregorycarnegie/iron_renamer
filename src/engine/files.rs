@@ -260,6 +260,7 @@ pub fn name_of(p: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use googletest::prelude::*;
 
     fn tmpdir(name: &str) -> PathBuf {
         let d = std::env::temp_dir().join(format!("iron_files_{}_{name}", std::process::id()));
@@ -268,7 +269,7 @@ mod tests {
         d
     }
 
-    #[test]
+    #[gtest]
     fn warming_lists_each_folder_once_up_front() {
         let root = tmpdir("warm");
         let (one, two) = (root.join("one"), root.join("two"));
@@ -289,13 +290,13 @@ mod tests {
             "cached: {:?}",
             k.map.keys().collect::<Vec<_>>()
         );
-        assert_eq!(k.map[&one].len(), 1);
+        expect_that!(k.map[&one], len(eq(1)));
         assert!(!k.map[&two]["b.txt"]);
         assert!(k.map[&two]["nested"]);
 
         // Warming again must not re-list a folder that is already cached.
         k.warm(vec![one.clone(), two.clone()]);
-        assert_eq!(k.map.len(), 2);
+        expect_that!(k.map, len(eq(2)));
 
         // Entries are matched case-insensitively, like NTFS.
         assert_eq!(k.kind(&one.join("A.TXT")), Some(false));

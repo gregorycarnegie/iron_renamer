@@ -16,13 +16,14 @@ pub use parse::{build_cond, build_rule};
 
 // ───────────────────────── rule model
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Part {
     Both,
     Name,
     Ext,
 }
 
+#[derive(Debug)]
 pub enum Occurrence {
     All,
     First,
@@ -30,7 +31,7 @@ pub enum Occurrence {
     Nth(usize), // 1-based
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum CaseMode {
     Lower,
     Upper,
@@ -39,12 +40,14 @@ pub enum CaseMode {
     Invert,
 }
 
+#[derive(Debug)]
 pub enum CaseScope {
     All,
     Pos { start: usize, len: usize }, // in chars
     Match(Regex),
 }
 
+#[derive(Debug)]
 pub enum InsertAt {
     Pos(usize), // in chars; clamped to the end
     FromEnd(usize),
@@ -52,6 +55,7 @@ pub enum InsertAt {
     After(Regex),
 }
 
+#[derive(Debug)]
 pub enum RemoveWhat {
     Range { start: usize, len: usize }, // in chars
     Match(Regex),
@@ -62,7 +66,7 @@ pub enum RemoveWhat {
     Diacritics, // é -> e, not removal
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum TrimAt {
     Start,
     End,
@@ -70,11 +74,13 @@ pub enum TrimAt {
     All, // throughout
 }
 
+#[derive(Debug)]
 pub enum RenumMode {
     Delta(i64),
     Sequence { start: i64, step: i64 }, // start + step * list index
 }
 
+#[derive(Debug)]
 pub enum Rule {
     Replace {
         find: String,
@@ -101,8 +107,8 @@ pub enum Rule {
     Renumber {
         nth: usize,
         mode: RenumMode,
-        pad: usize,
-    }, // pad 0 = keep width
+        pad: u16,
+    }, // pad 0 = keep width; u16 is the formatter's width limit
     MoveText {
         pat: Regex,
         to: InsertAt,
@@ -116,6 +122,7 @@ pub enum Rule {
     Js(String), // sandboxed script; completion value = new name
 }
 
+#[derive(Debug)]
 pub enum CondField {
     Original, // original file name
     Current,  // name after the rules so far
@@ -123,6 +130,7 @@ pub enum CondField {
     Path,
 }
 
+#[derive(Debug)]
 pub enum CondOp {
     Has,
     Starts,
@@ -131,6 +139,7 @@ pub enum CondOp {
     Re(Regex),
 }
 
+#[derive(Debug)]
 pub struct Cond {
     pub field: CondField,
     pub op: CondOp,
@@ -138,6 +147,7 @@ pub struct Cond {
     pub negate: bool,
 }
 
+#[derive(Debug)]
 pub struct RuleEntry {
     pub rule: Rule,
     pub part: Part,
@@ -146,11 +156,11 @@ pub struct RuleEntry {
 
 /// Per-file context a rule application runs in.
 pub struct Ctx<'a> {
-    pub index: usize, // 0-based list position
-    pub num: usize,   // counter (start + index)
-    pub pad: usize,
-    pub folder_num: usize, // 1-based position among list items in the same folder
-    pub total: usize,      // batch size for <total>; 0 = no batch context
+    pub index: usize,           // 0-based list position
+    pub num: usize,             // counter (start + index)
+    pub pad: u16,               // formatter widths panic past u16::MAX
+    pub folder_num: usize,      // 1-based position among list items in the same folder
+    pub total: usize,           // batch size for <total>; 0 = no batch context
     pub csv: &'a [Vec<String>], // rows for <csv:COL>; empty = no CSV loaded
     pub path: &'a Path,
     pub original: &'a str,

@@ -1,9 +1,27 @@
 use super::*;
+use crate::syntax;
 
 // ───────────────────────── rule parsing (shared CLI/GUI syntax)
 
 fn re(pat: &str) -> Result<Regex, String> {
     Regex::new(pat).map_err(|e| format!("bad regex '{pat}': {e}"))
+}
+
+/// Case-insensitive literal. Escaping rules out syntax errors, but a long
+/// enough text still exceeds the regex size limit, so this can fail.
+fn ci_literal(text: &str) -> Result<Regex, String> {
+    Regex::new(&format!("(?i){}", regex::escape(text)))
+        .map_err(|e| format!("text too long to match case-insensitively: {e}"))
+}
+
+// Numbers in rule syntax are plain digits (no '+', no spaces); the verified
+// kernels in syntax.rs define exactly what parses and reject overflow.
+fn uint<T: TryFrom<u64>>(s: &str) -> Option<T> {
+    syntax::parse_u64(s.as_bytes()).and_then(|n| T::try_from(n).ok())
+}
+
+fn int(s: &str) -> Option<i64> {
+    syntax::parse_i64(s.as_bytes())
 }
 
 // "re:PAT" is a regex; anything else matches literally.
@@ -34,14 +52,12 @@ pub fn parse_pos(s: &str) -> Result<InsertAt, String> {
         "start" => Ok(InsertAt::Pos(0)),
         "end" | "" => Ok(InsertAt::FromEnd(0)),
         _ => match s.strip_prefix('-') {
-            Some(n) => n
-                .parse()
+            Some(n) => uint(n)
                 .map(InsertAt::FromEnd)
-                .map_err(|_| format!("bad position '{s}'")),
-            None => s
-                .parse()
+                .ok_or_else(|| format!("bad position '{s}'")),
+            None => uint(s)
                 .map(InsertAt::Pos)
-                .map_err(|_| format!("bad position '{s}'")),
+                .ok_or_else(|| format!("bad position '{s}'")),
         },
     }
 }
@@ -52,8 +68,8 @@ fn parse_remove(s: &str) -> Result<RemoveWhat, String> {
             .split_once(',')
             .ok_or_else(|| format!("bad range '{s}' (use pos:START,LEN)"))?;
         return Ok(RemoveWhat::Range {
-            start: start.parse().map_err(|_| format!("bad range '{s}'"))?,
-            len: len.parse().map_err(|_| format!("bad range '{s}'"))?,
+            start: uint(start).ok_or_else(|| format!("bad range '{s}'"))?,
+            len: uint(len).ok_or_else(|| format!("bad range '{s}'"))?,
         });
     }
     if let Some(list) = s.strip_prefix("chars:") {
@@ -81,33 +97,32 @@ fn parse_case_scope(s: &str) -> Result<CaseScope, String> {
             .split_once(',')
             .ok_or_else(|| format!("bad scope '{s}' (use at:START,LEN)"))?;
         return Ok(CaseScope::Pos {
-            start: start.parse().map_err(|_| format!("bad scope '{s}'"))?,
-            len: len.parse().map_err(|_| format!("bad scope '{s}'"))?,
+            start: uint(start).ok_or_else(|| format!("bad scope '{s}'"))?,
+            len: uint(len).ok_or_else(|| format!("bad scope '{s}'"))?,
         });
     }
     Ok(CaseScope::Match(pat_or_literal(s)?))
 }
 
 fn parse_renum(s: &str) -> Result<RenumMode, String> {
+    // "+N" takes digits only, so "+-5" is an error rather than a delta of -5.
     if let Some(d) = s.strip_prefix('+') {
-        return d
-            .parse()
+        return uint(d)
             .map(RenumMode::Delta)
-            .map_err(|_| format!("bad delta '{s}'"));
+            .ok_or_else(|| format!("bad delta '{s}'"));
     }
     if s.starts_with('-') {
-        return s
-            .parse()
+        return int(s)
             .map(RenumMode::Delta)
-            .map_err(|_| format!("bad delta '{s}'"));
+            .ok_or_else(|| format!("bad delta '{s}'"));
     }
     let (start, step) = match s.split_once('/') {
         Some((a, b)) => (a, b),
         None => (s, "1"),
     };
     Ok(RenumMode::Sequence {
-        start: start.parse().map_err(|_| format!("bad start '{s}'"))?,
-        step: step.parse().map_err(|_| format!("bad step '{s}'"))?,
+        start: int(start).ok_or_else(|| format!("bad start '{s}'"))?,
+        step: int(step).ok_or_else(|| format!("bad step '{s}'"))?,
     })
 }
 
@@ -135,7 +150,8 @@ pub fn build_rule(kind: &str, mods: &[&str], a: &str, b: &str) -> Result<(Rule, 
                     "all" => occ = Occurrence::All,
                     "first" => occ = Occurrence::First,
                     "last" => occ = Occurrence::Last,
-                    m => match m.strip_prefix('n').and_then(|n| n.parse().ok()) {
+                    m => match m.strip_prefix('n').and_then(uint) {
+                        Some(0) => return Err("occurrence number is 1-based".into()),
                         Some(n) => occ = Occurrence::Nth(n),
                         None => return Err(unknown(m)),
                     },
@@ -147,7 +163,7 @@ pub fn build_rule(kind: &str, mods: &[&str], a: &str, b: &str) -> Result<(Rule, 
             Rule::Replace {
                 find: a.into(),
                 repl: b.into(),
-                ci: ci.then(|| Regex::new(&format!("(?i){}", regex::escape(a))).unwrap()),
+                ci: ci.then(|| ci_literal(a)).transpose()?,
                 occ,
             }
         }
@@ -206,12 +222,13 @@ pub fn build_rule(kind: &str, mods: &[&str], a: &str, b: &str) -> Result<(Rule, 
             Rule::Remove(parse_remove(a)?)
         }
         "trim" => {
+            // No "both" arm: that word is the apply-to mod, taken above, and
+            // Both is already the default end.
             let (mut at, mut invert) = (TrimAt::Both, false);
             for m in &rest {
                 match *m {
                     "start" => at = TrimAt::Start,
                     "end" => at = TrimAt::End,
-                    "both" => at = TrimAt::Both,
                     "all" => at = TrimAt::All,
                     "inv" => invert = true,
                     m => return Err(unknown(m)),
@@ -226,14 +243,12 @@ pub fn build_rule(kind: &str, mods: &[&str], a: &str, b: &str) -> Result<(Rule, 
         "renumber" => {
             let mut pad = 0;
             for m in &rest {
-                match m.strip_prefix("pad").and_then(|p| p.parse().ok()) {
+                match m.strip_prefix("pad").and_then(uint) {
                     Some(p) => pad = p,
                     None => return Err(unknown(m)),
                 }
             }
-            let nth: usize = a
-                .parse()
-                .map_err(|_| format!("bad number position '{a}'"))?;
+            let nth: usize = uint(a).ok_or_else(|| format!("bad number position '{a}'"))?;
             if nth == 0 {
                 return Err("number position is 1-based".into());
             }
@@ -289,12 +304,11 @@ pub fn build_rule(kind: &str, mods: &[&str], a: &str, b: &str) -> Result<(Rule, 
                         None => l.split_once('=')?,
                     };
                     (!old.is_empty()).then(|| {
-                        let re =
-                            ci.then(|| Regex::new(&format!("(?i){}", regex::escape(old))).unwrap());
-                        (old.to_string(), new.to_string(), re)
+                        let re = ci.then(|| ci_literal(old)).transpose()?;
+                        Ok((old.to_string(), new.to_string(), re))
                     })
                 })
-                .collect();
+                .collect::<Result<_, String>>()?;
             if pairs.is_empty() {
                 return Err("pairs needs OLD=NEW lines".into());
             }

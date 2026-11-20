@@ -287,6 +287,7 @@ fn set_audio(path: &Path, assigns: &[(String, &str)]) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use googletest::prelude::*;
     use rstest::rstest;
 
     fn tmp(name: &str) -> PathBuf {
@@ -366,7 +367,7 @@ mod tests {
         std::fs::write(p, b).unwrap();
     }
 
-    #[test]
+    #[gtest]
     fn set_counts_updated_files_and_collects_per_file_errors() {
         let (a, b) = (tmp("count_a.wav"), tmp("count_b.wav"));
         write_wav(&a);
@@ -386,23 +387,29 @@ mod tests {
         let missing = tmp("count_missing.wav");
         let _ = std::fs::remove_file(&missing);
         let err = set(&[a.clone(), missing.clone()], &["artist=X".into()]).unwrap_err();
-        assert!(err.contains("count_missing.wav"), "{err}");
+        expect_that!(err, contains_substring("count_missing.wav"));
     }
 
-    #[test]
+    #[gtest]
     fn set_rejects_assignments_that_are_not_tag_equals_value() {
         let p = tmp("badassign.wav");
         write_wav(&p);
         let err = set(std::slice::from_ref(&p), &["no_equals_sign".into()]).unwrap_err();
-        assert!(err.contains("expected TAG=VALUE"), "{err}");
+        expect_that!(err, contains_substring("expected TAG=VALUE"));
 
         // An empty value is legal; only a missing '=' is not.
-        assert!(set(std::slice::from_ref(&p), &["artist=".into()]).is_ok());
+        expect_that!(
+            set(std::slice::from_ref(&p), &["artist=".into()]),
+            ok(anything())
+        );
         // The tag half is trimmed and lowercased before matching.
-        assert!(set(std::slice::from_ref(&p), &["  ARTIST  =x".into()]).is_ok());
+        expect_that!(
+            set(std::slice::from_ref(&p), &["  ARTIST  =x".into()]),
+            ok(anything())
+        );
     }
 
-    #[test]
+    #[gtest]
     fn unsupported_tags_report_the_format_they_were_routed_to() {
         let wav = tmp("route.wav");
         write_wav(&wav);
@@ -411,19 +418,19 @@ mod tests {
 
         // Extension picks the writer, and each writer names its own tag list.
         let audio_err = set(std::slice::from_ref(&wav), &["bogus=1".into()]).unwrap_err();
-        assert!(audio_err.contains("unsupported audio tag"), "{audio_err}");
-        assert!(audio_err.contains("albumartist"), "{audio_err}");
+        expect_that!(audio_err, contains_substring("unsupported audio tag"));
+        expect_that!(audio_err, contains_substring("albumartist"));
 
         let image_err = set(std::slice::from_ref(&png), &["bogus=1".into()]).unwrap_err();
-        assert!(image_err.contains("unsupported image tag"), "{image_err}");
-        assert!(image_err.contains("datetimeoriginal"), "{image_err}");
+        expect_that!(image_err, contains_substring("unsupported image tag"));
+        expect_that!(image_err, contains_substring("datetimeoriginal"));
 
         // A tag that is valid for images is still rejected for audio.
         let err = set(std::slice::from_ref(&wav), &["copyright=me".into()]).unwrap_err();
-        assert!(err.contains("unsupported audio tag"), "{err}");
+        expect_that!(err, contains_substring("unsupported audio tag"));
     }
 
-    #[test]
+    #[gtest]
     fn every_audio_tag_round_trips_and_track_must_be_numeric() {
         let p = tmp("alltags.wav");
         write_wav_samples(&p, 8000); // exactly one second
@@ -452,7 +459,7 @@ mod tests {
             ("year", "1999"),
             ("albumartist", "Various"),
         ] {
-            assert_eq!(get(&p, tag).as_deref(), Some(want), "tag {tag}");
+            expect_that!(get(&p, tag).as_deref(), some(eq(want)), "tag {tag}");
         }
         // A file with real length reports a duration; the 1ms one does not.
         assert_eq!(get(&p, "duration").as_deref(), Some("0:00:01"));
@@ -464,7 +471,7 @@ mod tests {
         let bad = tmp("alltags_bad.wav");
         write_wav(&bad);
         let err = set(std::slice::from_ref(&bad), &["track=seven".into()]).unwrap_err();
-        assert!(err.contains("track needs a number"), "{err}");
+        expect_that!(err, contains_substring("track needs a number"));
     }
 
     #[test]
@@ -483,15 +490,15 @@ mod tests {
         assert_eq!(get(&t, "imagewidth").as_deref(), Some(""));
     }
 
-    #[test]
+    #[gtest]
     fn tag_lookup_is_case_insensitive_and_distinguishes_absent_from_unreadable() {
         let p = tmp("lookup.wav");
         write_wav(&p);
         set(std::slice::from_ref(&p), &["artist=Case Test".into()]).unwrap();
         for spelling in ["artist", "Artist", "ARTIST", "ArTiSt"] {
-            assert_eq!(
+            expect_that!(
                 get(&p, spelling).as_deref(),
-                Some("Case Test"),
+                some(eq("Case Test")),
                 "{spelling}"
             );
         }
