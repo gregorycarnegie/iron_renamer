@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.0 - 2026-11-21
+
+- Drag and drop now works on Linux desktops running Wayland, including Ubuntu's default session. The windowing library only delivers file drops on X11, so the app now runs through XWayland whenever it is available.
+- Rule arguments are stricter. Numbers must be plain digits: `+-5` and `++5` are no longer read as deltas, and `+3` is no longer read as a position. `replace n0` is now refused instead of acting as "first", since occurrences count from 1.
+- Counters with very large start or step values no longer overflow.
+- Case-insensitive Replace and List Replace with text past the regex size limit now refuse the rule with a message instead of crashing.
+- CSV export and presets now quote fields that contain a carriage return.
+- Updated dependencies: slint 1.19, rfd 0.18, nom-exif 3.8, lofty 0.25.5, clap 4.6.9, crc32fast 1.5.5, regex 1.13.
+- Internal: the counter, random and rule-argument parsing code is formally verified with Verus, and CI checks the proofs. The tests now use rstest, googletest and proptest.
+
 ## 0.4.4 - 2026-08-31
 
 - Renaming a batch of files is about 23% faster (8.7s -> 6.8s for 20,000 files). Each rename within a folder was spending a failed directory-create plus a metadata call proving the folder it was already in exists; that is skipped now. The saving is largest on network shares, where those were two round trips per file.

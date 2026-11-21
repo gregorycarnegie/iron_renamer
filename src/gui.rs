@@ -94,7 +94,20 @@ fn handle_drop(ui: &MainWindow, st: &Rc<RefCell<State>>, paths: Vec<PathBuf>) {
 /// `initial` paths (from Explorer or `iron_renamer gui`) load as if dropped;
 /// a .preset file loads as a preset.
 pub fn run(initial: Vec<PathBuf>) -> Result<(), slint::PlatformError> {
-    slint::BackendSelector::new()
+    let selector = slint::BackendSelector::new();
+    // winit 0.30 only delivers DroppedFile on X11; its Wayland backend has no
+    // drag-and-drop. Use XWayland whenever an X server is reachable.
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let selector = if std::env::var_os("DISPLAY").is_some() {
+        use slint::winit_030::{SlintEvent, winit};
+        use winit::platform::x11::EventLoopBuilderExtX11;
+        let mut builder = winit::event_loop::EventLoop::<SlintEvent>::with_user_event();
+        builder.with_x11();
+        selector.with_winit_event_loop_builder(builder)
+    } else {
+        selector
+    };
+    selector
         .with_winit_window_attributes_hook(|attrs| {
             let attrs = attrs.with_theme(Some(slint::winit_030::winit::window::Theme::Dark));
             #[cfg(target_os = "windows")]
