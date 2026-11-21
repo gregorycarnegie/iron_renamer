@@ -7,7 +7,7 @@ license = "MIT"
 [dependencies]
 # Sandboxed JS rules; no IO exposed by design.
 boa_engine = "0.22.0"
-clap = { version = "4.6.8", features = ["derive"] }
+clap = { version = "4.6.9", features = ["derive"] }
 crc32fast = "1.5.5"
 # Zero-dependency hash tags <md5> and <sha1>.
 md5 = "0.8.1"
